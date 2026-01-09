@@ -1,0 +1,243 @@
+/* Theme: Honey Bux (Dark & Gold)
+File: assets/css/style.css 
+*/
+
+:root {
+    --primary-gold: #FFD700;      /* Honey Gold */
+    --bg-dark: #000000;           /* Deep Black */
+    --card-bg: #1a1a1a;           /* Dark Gray for Cards */
+    --text-white: #ffffff;
+    --text-gray: #aaaaaa;
+    --danger: #ff4d4d;
+    --success: #28a745;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    background-color: var(--bg-dark);
+    color: var(--text-white);
+    /* Agar Background Image lagana ho to niche URL dalein */
+    background-image: url('../images/bg.jpg'); 
+    background-size: cover;
+    background-attachment: fixed;
+    background-position: center;
+    padding-top: 90px; /* Header ke liye jagah */
+    padding-bottom: 80px; /* Footer ke liye jagah */
+    min-height: 100vh;
+}
+
+/* Background Overlay (Text readable banane ke liye) */
+body::before {
+    content: "";
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.85); /* 85% Dark Overlay */
+    z-index: -1;
+}
+
+/* --- Sticky Header (Pill Shape) --- */
+.sticky-header {
+    position: fixed;
+    top: 15px;
+    left: 15px;
+    right: 15px;
+    height: 60px;
+    background: #111;
+    border: 1px solid var(--primary-gold);
+    border-radius: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 15px;
+    z-index: 1000;
+    box-shadow: 0 4px 15px rgba(255, 215, 0, 0.2);
+}
+
+.profile-section {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.profile-pic {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 2px solid var(--primary-gold);
+    object-fit: cover;
+}
+
+.user-name {
+    font-weight: bold;
+    font-size: 14px;
+    color: var(--text-white);
+}
+
+.settings-btn {
+    background: none;
+    border: none;
+    color: var(--primary-gold);
+    font-size: 20px;
+    cursor: pointer;
+}
+
+/* --- Cards & Containers --- */
+.container {
+    padding: 0 15px;
+}
+
+.card {
+    background: var(--card-bg);
+    border: 1px solid #333;
+    border-radius: 20px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+.card-gold-border {
+    border: 1px solid var(--primary-gold);
+}
+
+/* --- Buttons --- */
+.btn {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: 12px;
+    font-weight: bold;
+    font-size: 16px;
+    cursor: pointer;
+    transition: 0.3s;
+    text-align: center;
+}
+
+.btn-primary {
+    background: var(--primary-gold);
+    color: #000;
+}
+
+.btn-success { background: var(--success); color: #fff; }
+.btn-danger { background: var(--danger); color: #fff; }
+
+.btn-group {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+/* --- Form Elements --- */
+.form-group {
+    margin-bottom: 15px;
+    text-align: left;
+}
+
+label {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--text-gray);
+    font-size: 13px;
+}
+
+input, select {
+    width: 100%;
+    padding: 12px;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 10px;
+    color: #fff;
+    outline: none;
+}
+
+input:focus, select:focus {
+    border-color: var(--primary-gold);
+}
+
+/* --- Bottom Navigation --- */
+.bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background: #111;
+    border-top: 1px solid #333;
+    display: flex;
+    justify-content: space-around;
+    padding: 10px 0;
+    z-index: 1000;
+}
+
+.nav-item {
+    color: var(--text-gray);
+    text-decoration: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    font-size: 12px;
+    gap: 5px;
+}
+
+.nav-item.active {
+    color: var(--primary-gold);
+}
+
+.nav-item i {
+    font-size: 20px;
+}
+
+/* --- Wallet & Assets --- */
+.balance-card {
+    text-align: center;
+    background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+    color: #000;
+    padding: 25px;
+    border-radius: 20px;
+    margin-bottom: 20px;
+}
+
+.asset-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    background: #252525;
+    border-radius: 15px;
+    margin-bottom: 10px;
+}
+
+.asset-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.asset-icon {
+    width: 35px;
+    height: 35px;
+    border-radius: 50%;
+}
+
+/* --- Invite Section --- */
+.invite-link-box {
+    background: #333;
+    padding: 10px;
+    border-radius: 8px;
+    font-family: monospace;
+    word-break: break-all;
+    border: 1px dashed var(--primary-gold);
+    color: var(--primary-gold);
+    margin: 10px 0;
+}
+
+/* --- Helpers --- */
+.text-gold { color: var(--primary-gold); }
+.text-red { color: var(--danger); }
+.text-green { color: var(--success); }
+.text-center { text-align: center; }
+.mt-2 { margin-top: 10px; }
