@@ -1,8 +1,18 @@
 <?php
+/*
+File: index.php
+Purpose: Home Page (P2P Exchange) - Final Version with Validation
+*/
+
 require_once 'includes/functions.php';
 
+// 1. Settings Fetch karein
 $settings = getSettings($pdo);
 
+// Minimum Limit Database se nikalein (Validation ke liye)
+$min_limit = isset($settings['min_withdraw_limit']) ? floatval($settings['min_withdraw_limit']) : 10.00;
+
+// 2. User Setup (Testing Logic included)
 $tg_id = 123456789; 
 $first_name = "Guest";
 $username = "guest_user";
@@ -26,8 +36,22 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    
     <script src="assets/js/main.js"></script>
+    
+    <style>
+        /* Error Message Box Style */
+        #errorAlert {
+            display: none;
+            background-color: #ff4d4d;
+            color: white;
+            padding: 10px;
+            text-align: center;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            border: 1px solid #ff0000;
+        }
+    </style>
 </head>
 <body>
 
@@ -48,6 +72,8 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             <h1 style="font-family: 'Comic Sans MS', cursive; font-size: 32px;">P2P</h1>
             <p style="color: #aaa;">Secure & Fast Exchange</p>
         </div>
+
+        <div id="errorAlert"></div>
 
         <div class="btn-group">
             <button class="btn" id="btnBuy" onclick="switchTab('buy')" style="background: #28a745; color: white;">
@@ -82,7 +108,7 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
 
                 <div class="form-group">
                     <label>Amount (USDT)</label>
-                    <input type="number" id="buyAmount" name="amount" placeholder="Min 10 USDT" required oninput="calcInr('buy')">
+                    <input type="number" id="buyAmount" name="amount" placeholder="Min <?php echo $min_limit; ?> USDT" required oninput="calcInr('buy')">
                     <div class="mt-2" style="font-size: 12px; color: gold;">
                         You Pay: ₹<span id="payInr">0.00</span>
                     </div>
@@ -106,7 +132,12 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
                 <div class="form-group">
                     <label>Send USDT to Admin Wallet</label>
                     <div class="invite-link-box" style="display: flex; justify-content: space-between; align-items: center;">
-                        <span id="adminWallet">0x123...abc (TRC20)</span> 
+                        <span id="adminWallet">
+                            <?php 
+                                $wData = json_decode($settings['admin_wallets_json'], true);
+                                echo is_array($wData) ? ($wData['USDT'] ?? 'Update in Admin') : $settings['admin_wallets_json']; 
+                            ?>
+                        </span> 
                         <i class="fa-regular fa-copy" onclick="copyText('adminWallet')" style="cursor: pointer;"></i>
                     </div>
                 </div>
@@ -122,7 +153,7 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
 
                 <div class="form-group">
                     <label>Amount (USDT)</label>
-                    <input type="number" id="sellAmount" name="amount" placeholder="Min 10 USDT" required oninput="calcInr('sell')">
+                    <input type="number" id="sellAmount" name="amount" placeholder="Min <?php echo $min_limit; ?> USDT" required oninput="calcInr('sell')">
                     <div class="mt-2" style="font-size: 12px; color: gold;">
                         You Receive: ₹<span id="getInr">0.00</span>
                     </div>
@@ -169,15 +200,53 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
     </div>
 
     <script>
+        // --- 1. CONFIGURATION ---
         const tg = window.Telegram.WebApp;
         tg.expand();
+        
+        // PHP Variable ko JS me convert kar rahe hain (Validation ke liye)
+        const minLimit = <?php echo $min_limit; ?>;
+        const buyRate = <?php echo $settings['p2p_buy_rate_margin'] + 90; ?>;
+        const sellRate = <?php echo 90 - $settings['p2p_sell_rate_margin']; ?>;
 
+        // User Name set karna
         if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
             document.getElementById('userDataName').innerText = tg.initDataUnsafe.user.first_name;
         }
 
-        const buyRate = <?php echo $settings['p2p_buy_rate_margin'] + 90; ?>;
-        const sellRate = <?php echo 90 - $settings['p2p_sell_rate_margin']; ?>;
+        // --- 2. LOGIC FUNCTIONS ---
+
+        // Error Show karne ka function
+        function showError(message) {
+            const alertBox = document.getElementById('errorAlert');
+            alertBox.innerText = message;
+            alertBox.style.display = 'block';
+            
+            // 3 seconds baad error gayab ho jayega
+            setTimeout(() => {
+                alertBox.style.display = 'none';
+            }, 3000);
+            
+            // Scroll to top to see error
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function switchTab(type) {
+            // Error hide karo tab change par
+            document.getElementById('errorAlert').style.display = 'none';
+            
+            if(type === 'buy') {
+                document.getElementById('buySection').style.display = 'block';
+                document.getElementById('sellSection').style.display = 'none';
+                document.getElementById('btnBuy').style.background = '#28a745';
+                document.getElementById('btnSell').style.background = '#333';
+            } else {
+                document.getElementById('buySection').style.display = 'none';
+                document.getElementById('sellSection').style.display = 'block';
+                document.getElementById('btnBuy').style.background = '#333';
+                document.getElementById('btnSell').style.background = '#ff4d4d';
+            }
+        }
 
         function calcInr(type) {
             if(type === 'buy') {
@@ -189,17 +258,41 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             }
         }
 
+        function openSettings() {
+            document.getElementById('settingsModal').style.display = 'flex';
+        }
+        
+        // Agar main.js load nahi hui to fallback copyText
+        if (typeof copyText !== 'function') {
+            function copyText(elementId) {
+                let text = document.getElementById(elementId).innerText;
+                navigator.clipboard.writeText(text);
+                alert('Copied: ' + text);
+            }
+        }
+
+        // --- 3. SUBMIT LOGIC WITH VALIDATION ---
         function submitOrder(e, type) {
             e.preventDefault();
             
             let btn = e.target.querySelector('button');
             let originalText = btn.innerText;
-            btn.innerText = "Processing...";
-            btn.disabled = true;
-
+            
+            // --- VALIDATION START ---
             let formId = type === 'buy' ? 'buyForm' : 'sellForm';
             let form = document.getElementById(formId);
             let formData = new FormData(form);
+            let inputAmount = parseFloat(formData.get('amount'));
+
+            // Check Minimum Amount
+            if (isNaN(inputAmount) || inputAmount < minLimit) {
+                showError("❌ Minimum Amount is " + minLimit + " USDT");
+                return; // Code yahin ruk jayega
+            }
+            // --- VALIDATION END ---
+
+            btn.innerText = "Processing...";
+            btn.disabled = true;
             
             formData.append('type', type);
             formData.append('tg_id', <?php echo $tg_id; ?>);
@@ -224,12 +317,12 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
                     form.reset();
                     setTimeout(() => { window.location.href = 'history.php'; }, 1000);
                 } else {
-                    alert("Error: " + data.message);
+                    showError("⚠️ " + data.message); // API Error bhi upar dikhega
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert("Something went wrong!");
+                showError("Something went wrong! Check connection.");
             })
             .finally(() => {
                 btn.innerText = originalText;
