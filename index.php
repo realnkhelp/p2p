@@ -1,29 +1,18 @@
 <?php
-/*
-File: index.php
-Purpose: Home Page (P2P Exchange)
-*/
-
 require_once 'includes/functions.php';
 
-// 1. Settings Fetch karein (Rates, Wallets etc.)
 $settings = getSettings($pdo);
 
-// 2. Telegram User Data (Simulation for Browser Testing)
-// Jab Telegram me chalega to ye data JS se aayega, abhi default PHP se set kar rahe hain
-$tg_id = 123456789; // Demo ID
+$tg_id = 123456789; 
 $first_name = "Guest";
 $username = "guest_user";
 
-// Agar URL me tg_id aa raha hai (Testing ke liye)
 if (isset($_GET['tg_id'])) {
     $tg_id = cleanInput($_GET['tg_id']);
     $first_name = cleanInput($_GET['first_name'] ?? 'User');
 }
 
-// 3. User ko Database me Login/Register karein
 $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
-
 ?>
 
 <!DOCTYPE html>
@@ -32,9 +21,13 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>P2P Exchange</title>
+    
     <link rel="stylesheet" href="assets/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    
+    <script src="assets/js/main.js"></script>
 </head>
 <body>
 
@@ -58,7 +51,7 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
 
         <div class="btn-group">
             <button class="btn" id="btnBuy" onclick="switchTab('buy')" style="background: #28a745; color: white;">
-                BUY ₹<?php echo $settings['p2p_buy_rate_margin'] + 90; // Approx Rate ?>
+                BUY ₹<?php echo $settings['p2p_buy_rate_margin'] + 90; ?>
             </button>
             <button class="btn" id="btnSell" onclick="switchTab('sell')" style="background: #333; color: white; border: 1px solid #ff4d4d;">
                 SELL ₹<?php echo 90 - $settings['p2p_sell_rate_margin']; ?>
@@ -176,32 +169,13 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
     </div>
 
     <script>
-        // Telegram Initialization
         const tg = window.Telegram.WebApp;
-        tg.expand(); // Full Screen
+        tg.expand();
 
-        // User Data Telegram se lena
         if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
             document.getElementById('userDataName').innerText = tg.initDataUnsafe.user.first_name;
-            // Note: Telegram ID backend ko bhejna padega API calls me
         }
 
-        // --- Toggle Tabs ---
-        function switchTab(type) {
-            if(type === 'buy') {
-                document.getElementById('buySection').style.display = 'block';
-                document.getElementById('sellSection').style.display = 'none';
-                document.getElementById('btnBuy').style.background = '#28a745'; // Green
-                document.getElementById('btnSell').style.background = '#333';
-            } else {
-                document.getElementById('buySection').style.display = 'none';
-                document.getElementById('sellSection').style.display = 'block';
-                document.getElementById('btnBuy').style.background = '#333';
-                document.getElementById('btnSell').style.background = '#ff4d4d'; // Red
-            }
-        }
-
-        // --- INR Calculator ---
         const buyRate = <?php echo $settings['p2p_buy_rate_margin'] + 90; ?>;
         const sellRate = <?php echo 90 - $settings['p2p_sell_rate_margin']; ?>;
 
@@ -215,26 +189,54 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             }
         }
 
-        // --- Copy Text ---
-        function copyText(elementId) {
-            let text = document.getElementById(elementId).innerText;
-            navigator.clipboard.writeText(text);
-            tg.showPopup({message: 'Copied: ' + text});
-        }
-
-        // --- Settings Modal ---
-        function openSettings() {
-            document.getElementById('settingsModal').style.display = 'flex';
-        }
-
-        // --- Submit Order (AJAX Placeholder) ---
         function submitOrder(e, type) {
             e.preventDefault();
-            // Yahan hum API/submit_order.php ko data bhejenge (Next Step)
-            alert(type.toUpperCase() + " Request Submitted! (Logic Next Step me add karenge)");
-        }
+            
+            let btn = e.target.querySelector('button');
+            let originalText = btn.innerText;
+            btn.innerText = "Processing...";
+            btn.disabled = true;
 
-        // --- Security (Disable Right Click) ---
+            let formId = type === 'buy' ? 'buyForm' : 'sellForm';
+            let form = document.getElementById(formId);
+            let formData = new FormData(form);
+            
+            formData.append('type', type);
+            formData.append('tg_id', <?php echo $tg_id; ?>);
+            formData.append('asset', 'USDT');
+
+            fetch('api/submit_order.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if(data.status === 'success') {
+                    if(window.Telegram.WebApp) {
+                        window.Telegram.WebApp.showPopup({
+                            title: 'Success',
+                            message: data.message,
+                            buttons: [{type: 'ok'}]
+                        });
+                    } else {
+                        alert(data.message);
+                    }
+                    form.reset();
+                    setTimeout(() => { window.location.href = 'history.php'; }, 1000);
+                } else {
+                    alert("Error: " + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert("Something went wrong!");
+            })
+            .finally(() => {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            });
+        }
+        
         document.addEventListener('contextmenu', event => event.preventDefault());
     </script>
 </body>
