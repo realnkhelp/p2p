@@ -1,39 +1,48 @@
 <?php
 /*
 File: invite.php
-Purpose: Referral System (Viral Growth)
+Purpose: Referral System (Photo First, Initials Fallback)
 */
 require_once 'includes/functions.php';
 $settings = getSettings($pdo);
 
-// Browser Testing ID
+// 1. Settings & Limits
+$referral_reward = isset($settings['referral_bonus_amount']) ? $settings['referral_bonus_amount'] : 0.50; 
+$min_trade_req = isset($settings['referral_min_trade']) ? $settings['referral_min_trade'] : 50; 
+
+// 2. User Setup (Browser Fallback)
 $tg_id = 123456789; 
 if (isset($_GET['tg_id'])) $tg_id = cleanInput($_GET['tg_id']);
 
 $user = getOrCreateUser($pdo, $tg_id, "Guest", "guest");
 
-// --- 1. Referral Link Generate Karein ---
-// Bot URL settings table se aayega
+// 3. Referral Link
 $bot_url = $settings['bot_url']; 
-// Final Link: https://t.me/BotName?startapp=123456
 $invite_link = $bot_url . "?startapp=" . $user['telegram_id'];
 
-// --- 2. Stats Calculate Karein ---
-// Total Referrals Count
+// 4. Stats Calculation
+// Total Referrals
 $stmt = $pdo->prepare("SELECT COUNT(*) FROM users WHERE referred_by = ?");
 $stmt->execute([$user['telegram_id']]);
 $total_refs = $stmt->fetchColumn();
 
-// Total Earnings (Referral Bonus)
+// Total Earned
 $stmt = $pdo->prepare("SELECT SUM(amount) FROM transactions WHERE user_id = ? AND type = 'referral_bonus'");
 $stmt->execute([$user['telegram_id']]);
 $total_earned = $stmt->fetchColumn();
-if(!$total_earned) $total_earned = '0.00';
+if(!$total_earned) $total_earned = 0.00;
 
-// --- 3. Referral List Fetch Karein (Recent 10) ---
-$stmt = $pdo->prepare("SELECT first_name, created_at FROM users WHERE referred_by = ? ORDER BY id DESC LIMIT 10");
+// 5. Fetch Referral List (Including Photo URL)
+// Hum First Name, Last Name aur Photo URL teeno manga rahe hain
+$stmt = $pdo->prepare("
+    SELECT first_name, last_name, photo_url, created_at, telegram_id
+    FROM users 
+    WHERE referred_by = ? 
+    ORDER BY id DESC LIMIT 20
+");
 $stmt->execute([$user['telegram_id']]);
 $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
 ?>
 
 <!DOCTYPE html>
@@ -42,33 +51,123 @@ $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Invite Friends</title>
+    
     <link rel="stylesheet" href="assets/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    
+    <style>
+        /* Stats Card Styling */
+        .stats-container {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            flex: 1;
+            background: #1e1e1e; 
+            border: 1px solid #333;
+            border-radius: 15px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        }
+        .stat-label { font-size: 13px; color: #aaa; margin-bottom: 5px; }
+        .stat-value { font-size: 22px; font-weight: bold; color: #007bff; }
+        .stat-value.gold { color: gold; }
+
+        /* Referral List Styling */
+        .ref-list-item {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            background: rgba(255,255,255,0.02);
+            margin-bottom: 10px;
+            border-radius: 12px;
+        }
+        
+        /* Avatar Logic */
+        .ref-avatar-img {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            margin-right: 15px;
+            object-fit: cover;
+            border: 1px solid #444;
+        }
+        
+        /* Fallback Initials Circle (AK style) */
+        .ref-avatar-initials {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            margin-right: 15px;
+            background: #0ecb81; /* Greenish background like screenshot */
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 16px;
+            text-transform: uppercase;
+            border: 1px solid #fff;
+        }
+
+        .ref-info { flex: 1; }
+        .ref-name { font-weight: bold; font-size: 15px; color: white; }
+        .ref-date { font-size: 11px; color: #888; margin-top: 2px; }
+        
+        .reward-badge {
+            background: #007bff;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0,123,255,0.3);
+        }
+    </style>
 </head>
 <body>
 
     <div class="sticky-header">
         <div class="profile-section">
-            <img src="assets/images/user.png" onerror="this.src='https://via.placeholder.com/40'" class="profile-pic">
+            <img src="assets/images/user.png" onerror="this.src='https://via.placeholder.com/40'" class="profile-pic" id="headerProfileImg">
             <div>
-                <div class="user-name"><?php echo $user['first_name']; ?></div>
+                <div class="user-name" id="headerUserName"><?php echo htmlspecialchars($user['first_name']); ?></div>
                 <div style="font-size: 10px; color: gold;">Refer & Earn</div>
             </div>
         </div>
         <button class="settings-btn"><i class="fa-solid fa-share-nodes"></i></button>
     </div>
 
-    <div class="container" style="margin-top: 20px;">
+    <div class="container" style="margin-top: 20px; margin-bottom: 80px;">
 
-        <div class="card" style="text-align: center; background: linear-gradient(135deg, #1a1a1a 0%, #333 100%); border: 1px solid gold;">
-            <i class="fa-solid fa-users" style="font-size: 40px; color: gold; margin-bottom: 10px;"></i>
+        <div class="stats-container">
+            <div class="stat-card">
+                <div class="stat-label">Total Referrals</div>
+                <div class="stat-value gold"><?php echo $total_refs; ?></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Reward</div>
+                <div class="stat-value">
+                    <?php echo number_format($total_earned, 2); ?> USDT
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="text-align: center; border: 1px solid gold; background: linear-gradient(135deg, #222 0%, #111 100%);">
+            <i class="fa-solid fa-gift" style="font-size: 40px; color: gold; margin-bottom: 10px;"></i>
             
-            <h2 style="color: #fff;">Invite Friends!</h2>
-            <p style="color: #aaa; font-size: 13px; margin: 10px 0;">
-                Share your link and earn 
-                <span style="color: gold; font-weight: bold;"><?php echo $settings['referral_bonus_amount']; ?> USDT</span> 
-                for every friend who joins & deposits.
+            <h2 style="color: #fff; margin-bottom: 5px;">Invite Friends!</h2>
+            
+            <p style="color: #ccc; font-size: 13px; line-height: 1.6; margin: 10px 0;">
+                Share your link and earn <b style="color: gold;"><?php echo $referral_reward; ?> USDT</b> for every friend who joins & deposits.
+                <br>
+                <span style="font-size: 11px; color: #888; display: block; margin-top: 5px;">
+                    (<?php echo $min_trade_req; ?>$ buy sell anything reward claim)
+                </span>
             </p>
 
             <div class="invite-link-box" id="myLink">
@@ -80,46 +179,54 @@ $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </button>
         </div>
 
-        <div style="display: flex; gap: 15px; margin-bottom: 20px;">
-            <div class="card" style="flex: 1; text-align: center; margin-bottom: 0; padding: 15px;">
-                <div style="font-size: 12px; color: #aaa;">Total Referrals</div>
-                <h2 style="color: #fff;"><?php echo $total_refs; ?></h2>
-            </div>
-            <div class="card" style="flex: 1; text-align: center; margin-bottom: 0; padding: 15px;">
-                <div style="font-size: 12px; color: #aaa;">Total Earned</div>
-                <h2 style="color: gold;"><?php echo number_format($total_earned, 2); ?></h2>
-                <span style="font-size: 10px;">USDT</span>
-            </div>
-        </div>
+        <h3 style="margin: 20px 0 10px 0; color: gold;">Referrals List</h3>
 
-        <h3 style="margin-bottom: 15px; color: gold;">My Referrals</h3>
-        
-        <?php if(count($my_referrals) > 0): ?>
-            <?php foreach($my_referrals as $ref): ?>
-                <div class="asset-row">
-                    <div class="asset-left">
-                        <div style="width: 35px; height: 35px; background: #333; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: gold; font-weight: bold;">
-                            <?php echo strtoupper(substr($ref['first_name'], 0, 1)); ?>
-                        </div>
-                        <div>
-                            <div style="font-weight: bold;"><?php echo htmlspecialchars($ref['first_name']); ?></div>
-                            <div style="font-size: 10px; color: #aaa;">Joined: <?php echo date('d M Y', strtotime($ref['created_at'])); ?></div>
-                        </div>
+        <div id="referralList">
+            <?php if(count($my_referrals) > 0): ?>
+                <?php foreach($my_referrals as $ref): 
+                    // 1. Data Setup
+                    $full_name = htmlspecialchars($ref['first_name'] . ' ' . $ref['last_name']);
+                    $join_date = date('d/m/Y', strtotime($ref['created_at']));
+                    $display_amount = "0.00"; // Default pending
+                    
+                    // 2. Avatar Logic (Photo vs Initials)
+                    $photo_url = $ref['photo_url']; // DB se photo URL
+                    $show_image = !empty($photo_url); // Check agar photo hai
+                    
+                    // Initials Banayein (Fallback ke liye)
+                    // Agar naam "Akash Kumar" hai to "AK", agar sirf "Akash" hai to "A"
+                    $initials = strtoupper(substr($ref['first_name'], 0, 1));
+                    if(!empty($ref['last_name'])) {
+                        $initials .= strtoupper(substr($ref['last_name'], 0, 1));
+                    }
+                ?>
+                <div class="ref-list-item">
+                    
+                    <?php if($show_image): ?>
+                        <img src="<?php echo htmlspecialchars($photo_url); ?>" class="ref-avatar-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="ref-avatar-initials" style="display:none;"><?php echo $initials; ?></div>
+                    <?php else: ?>
+                        <div class="ref-avatar-initials"><?php echo $initials; ?></div>
+                    <?php endif; ?>
+                    
+                    
+                    <div class="ref-info">
+                        <div class="ref-name"><?php echo $full_name; ?></div>
+                        <div class="ref-date">Joined <?php echo $join_date; ?></div>
                     </div>
-                    <div style="text-align: right;">
-                        <span class="text-green" style="font-size: 12px; font-weight: bold;">
-                            +<?php echo $settings['referral_bonus_amount']; ?> USDT
-                        </span>
-                        <div style="font-size: 9px; color: #666;">(Pending Deposit)</div>
+                    
+                    <div class="reward-badge">
+                        +<?php echo $display_amount; ?> USDT
                     </div>
                 </div>
-            <?php endforeach; ?>
-        <?php else: ?>
-            <div class="text-center" style="color: #666; padding: 20px;">
-                <i class="fa-regular fa-folder-open" style="font-size: 30px; margin-bottom: 10px;"></i>
-                <p>No referrals yet. Share your link!</p>
-            </div>
-        <?php endif; ?>
+                <?php endforeach; ?>
+            <?php else: ?>
+                <div class="text-center" style="padding: 30px; opacity: 0.5;">
+                    <i class="fa-solid fa-user-group" style="font-size: 30px; margin-bottom: 10px;"></i>
+                    <p>No referrals yet.</p>
+                </div>
+            <?php endif; ?>
+        </div>
 
     </div>
 
@@ -143,20 +250,36 @@ $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 
     <script>
+        // TG WebApp Setup
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+
+        // Sync Header with TG Data
+        if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+            const user = tg.initDataUnsafe.user;
+            const fullName = user.first_name + (user.last_name ? ' ' + user.last_name : '');
+            document.getElementById('headerUserName').innerText = fullName;
+            if (user.photo_url) {
+                document.getElementById('headerProfileImg').src = user.photo_url;
+            }
+        }
+
         function copyLink() {
             let linkText = document.getElementById("myLink").innerText;
-            navigator.clipboard.writeText(linkText);
-            
-            // Telegram Popup
-            if(window.Telegram.WebApp) {
-                window.Telegram.WebApp.showPopup({
-                    title: 'Copied!',
-                    message: 'Referral link copied to clipboard.',
-                    buttons: [{type: 'ok'}]
-                });
-            } else {
-                alert("Link Copied!");
-            }
+            navigator.clipboard.writeText(linkText).then(() => {
+                if(tg.showPopup) {
+                    tg.showPopup({
+                        title: 'Success',
+                        message: 'Referral link copied!',
+                        buttons: [{type: 'ok'}]
+                    });
+                } else {
+                    alert("Link Copied!");
+                }
+            }).catch(err => {
+                console.error('Copy failed', err);
+                alert("Please copy manually.");
+            });
         }
     </script>
 </body>
