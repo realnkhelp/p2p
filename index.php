@@ -1,7 +1,7 @@
 <?php
 /*
 File: index.php
-Purpose: Home Page - With Auto Telegram Profile Sync
+Purpose: Home Page - With Auto Telegram Profile Sync & Dynamic Forms
 */
 
 require_once 'includes/functions.php';
@@ -12,7 +12,7 @@ $settings = getSettings($pdo);
 // 2. Minimum Limit
 $min_limit = isset($settings['min_withdraw_limit']) ? floatval($settings['min_withdraw_limit']) : 10.00;
 
-// 3. Admin Wallet Logic
+// 3. Admin Wallet Logic (Defaults)
 $admin_wallet_address = "Update in Admin Panel"; 
 if (!empty($settings['admin_wallets_json'])) {
     $wData = json_decode($settings['admin_wallets_json'], true);
@@ -28,7 +28,7 @@ $tg_id = 123456789;
 $first_name = "Guest";
 $username = "guest_user";
 
-// Agar URL me data aa raha hai to use karein
+// Agar URL me data aa raha hai to use karein (Optional)
 if (isset($_GET['tg_id'])) {
     $tg_id = cleanInput($_GET['tg_id']);
     $first_name = cleanInput($_GET['first_name'] ?? 'User');
@@ -71,6 +71,18 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             object-fit: cover;
             border: 2px solid gold;
         }
+        /* Spacing helpers */
+        .mt-3 { margin-top: 15px; }
+        .mb-2 { margin-bottom: 10px; }
+        
+        /* Bank/UPI Toggle styling */
+        .payment-details-box {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
@@ -104,28 +116,36 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             </button>
         </div>
 
-        <div id="buySection" class="card card-gold-border">
+        <div id="buySection" class="card card-gold-border mt-3">
             <h3 class="text-center mb-2">Buy USDT</h3>
             <form id="buyForm" onsubmit="submitOrder(event, 'buy')">
+                
                 <div class="form-group">
-                    <label>Send Payment to this UPI/Bank</label>
+                    <label>1. Send Payment to this UPI</label>
                     <div class="invite-link-box" style="display: flex; justify-content: space-between; align-items: center;">
                         <span id="adminUpi"><?php echo $settings['admin_upi']; ?></span>
                         <i class="fa-regular fa-copy" onclick="copyText('adminUpi')" style="cursor: pointer;"></i>
                     </div>
-                    <small style="color: #aaa;">Copy UPI ID and send money via PhonePe/GPay.</small>
+                    <small style="color: #aaa;">Send money via PhonePe/GPay/Paytm.</small>
                 </div>
 
                 <div class="form-group">
-                    <label>Select Network</label>
+                    <label>2. Receiver Wallet Address</label>
+                    <input type="text" name="receiver_wallet" placeholder="Paste YOUR Wallet Address" required>
+                    <small style="color: gold; font-size: 10px;">We will send USDT to this address.</small>
+                </div>
+
+                <div class="form-group">
+                    <label>3. Select Network</label>
                     <select name="network" required>
                         <option value="TRC20">USDT (TRC20)</option>
                         <option value="BEP20">USDT (BEP20)</option>
+                        <option value="POLYGON">USDT (POLYGON)</option>
                     </select>
                 </div>
 
                 <div class="form-group">
-                    <label>Amount (USDT)</label>
+                    <label>4. Amount (USDT)</label>
                     <input type="number" id="buyAmount" name="amount" placeholder="Min <?php echo $min_limit; ?> USDT" step="0.01" required oninput="calcInr('buy')">
                     <div class="mt-2" style="font-size: 12px; color: gold;">
                         You Pay: ₹<span id="payInr">0.00</span>
@@ -133,37 +153,66 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
                 </div>
 
                 <div class="form-group">
-                    <label>Transaction ID / UTR</label>
+                    <label>5. Transaction ID / UTR</label>
                     <input type="text" name="tx_hash" placeholder="Enter 12-digit UTR" required>
                 </div>
 
-                <button type="submit" class="btn btn-success">Submit Buy Request</button>
+                <button type="submit" class="btn btn-success mt-3">Submit Buy Request</button>
                 <p class="text-center mt-2" style="font-size: 10px; color: #888;">Credited within 15-30 mins.</p>
             </form>
         </div>
 
-        <div id="sellSection" class="card card-gold-border" style="display: none;">
+        <div id="sellSection" class="card card-gold-border mt-3" style="display: none;">
             <h3 class="text-center mb-2">Sell USDT</h3>
             <form id="sellForm" onsubmit="submitOrder(event, 'sell')">
+                
                 <div class="form-group">
-                    <label>Send USDT to Admin Wallet</label>
+                    <label>1. Wallet Address (Send USDT Here)</label>
                     <div class="invite-link-box" style="display: flex; justify-content: space-between; align-items: center;">
-                        <span id="adminWallet"><?php echo $admin_wallet_address; ?></span> 
-                        <i class="fa-regular fa-copy" onclick="copyText('adminWallet')" style="cursor: pointer;"></i>
+                        <span id="adminWallet" style="font-size: 12px; word-break: break-all;"><?php echo $admin_wallet_address; ?></span> 
+                        <i class="fa-regular fa-copy" onclick="copyText('adminWallet')" style="cursor: pointer; margin-left:5px;"></i>
                     </div>
                 </div>
 
                 <div class="form-group">
-                    <label>Your Payment Details (To Receive INR)</label>
-                    <select name="payment_method" required>
-                        <option value="UPI">UPI</option>
-                        <option value="BANK">Bank Transfer</option>
-                    </select>
-                    <input type="text" name="user_payment_details" placeholder="Enter your UPI ID or Bank Details" class="mt-2" required>
+                    <label>2. Wallet Network</label>
+                    <div style="background: #333; padding: 10px; border-radius: 5px; color: #fff; font-weight: bold; border: 1px solid #555;">
+                        TRC20 / BEP20 (Check Admin Address)
+                    </div>
+                    <small style="color: #aaa;">Only send USDT on the correct network.</small>
                 </div>
 
                 <div class="form-group">
-                    <label>Amount (USDT)</label>
+                    <label>3. Your Payment Details (To Receive INR)</label>
+                    <select name="payment_method" id="sellPaymentMethod" onchange="toggleSellPaymentFields()" required>
+                        <option value="UPI">UPI</option>
+                        <option value="BANK">Bank Transfer</option>
+                    </select>
+
+                    <div class="payment-details-box">
+                        <div id="upiInputSection">
+                            <label style="font-size: 12px;">Enter UPI ID</label>
+                            <input type="text" name="upi_id" placeholder="e.g. user@ybl" style="margin-top:5px;">
+                        </div>
+
+                        <div id="bankInputSection" style="display: none;">
+                            <label style="font-size: 12px;">Bank Name</label>
+                            <input type="text" name="bank_name" placeholder="e.g. SBI, HDFC" style="margin-top:5px; margin-bottom:10px;">
+                            
+                            <label style="font-size: 12px;">Account Holder Name</label>
+                            <input type="text" name="account_holder" placeholder="Name on Passbook" style="margin-bottom:10px;">
+                            
+                            <label style="font-size: 12px;">Bank Account Number</label>
+                            <input type="text" name="account_number" placeholder="Account No." style="margin-bottom:10px;">
+                            
+                            <label style="font-size: 12px;">IFSC Code</label>
+                            <input type="text" name="ifsc_code" placeholder="IFSC Code" style="margin-bottom:5px;">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>4. Amount (USDT)</label>
                     <input type="number" id="sellAmount" name="amount" placeholder="Min <?php echo $min_limit; ?> USDT" step="0.01" required oninput="calcInr('sell')">
                     <div class="mt-2" style="font-size: 12px; color: gold;">
                         You Receive: ₹<span id="getInr">0.00</span>
@@ -171,11 +220,11 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
                 </div>
 
                 <div class="form-group">
-                    <label>Transaction Hash (Proof)</label>
+                    <label>5. Transaction Hash (Proof)</label>
                     <input type="text" name="tx_hash" placeholder="Paste TX Hash" required>
                 </div>
 
-                <button type="submit" class="btn btn-danger">Submit Sell Request</button>
+                <button type="submit" class="btn btn-danger mt-3">Submit Sell Request</button>
             </form>
         </div>
 
@@ -215,21 +264,21 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
         const tg = window.Telegram.WebApp;
         tg.expand();
         
-        // Default PHP Data
+        // Default PHP Data logic
         let currentTgId = <?php echo $tg_id; ?>;
         
-        // --- YE MAIN LOGIC HAI (Photo & Name update karne ka) ---
+        // Telegram Data Sync Logic
         if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
             const user = tg.initDataUnsafe.user;
             
-            // 1. Update Real TG ID for logic
+            // 1. Update Real TG ID
             currentTgId = user.id;
 
-            // 2. Update Name in Header
+            // 2. Update Name in Header (First Name + Last Name)
             const fullName = user.first_name + (user.last_name ? ' ' + user.last_name : '');
             document.getElementById('userDataName').innerText = fullName;
 
-            // 3. Update Profile Photo (Agar photo available hai)
+            // 3. Update Profile Photo
             if (user.photo_url) {
                 document.getElementById('userDataImg').src = user.photo_url;
             }
@@ -267,6 +316,35 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             }
         }
 
+        // --- NEW FUNCTION: Toggle Sell Payment Fields ---
+        function toggleSellPaymentFields() {
+            const method = document.getElementById('sellPaymentMethod').value;
+            const upiSection = document.getElementById('upiInputSection');
+            const bankSection = document.getElementById('bankInputSection');
+            
+            // Input references to toggle required attribute
+            const upiInput = upiSection.querySelector('input');
+            const bankInputs = bankSection.querySelectorAll('input');
+
+            if (method === 'UPI') {
+                upiSection.style.display = 'block';
+                bankSection.style.display = 'none';
+                
+                // Set required for UPI, Remove for Bank
+                upiInput.setAttribute('required', 'true');
+                bankInputs.forEach(input => input.removeAttribute('required'));
+            } else {
+                upiSection.style.display = 'none';
+                bankSection.style.display = 'block';
+                
+                // Set required for Bank, Remove for UPI
+                bankInputs.forEach(input => input.setAttribute('required', 'true'));
+                upiInput.removeAttribute('required');
+            }
+        }
+        // Initialize on load
+        toggleSellPaymentFields();
+
         function calcInr(type) {
             if(type === 'buy') {
                 let amt = document.getElementById('buyAmount').value;
@@ -290,7 +368,7 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             });
         }
 
-        // --- SUBMIT LOGIC (Updated to use Real User ID) ---
+        // --- SUBMIT LOGIC ---
         function submitOrder(e, type) {
             e.preventDefault();
             
@@ -310,8 +388,6 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             btn.innerText = "Processing...";
             btn.disabled = true;
             
-            // IMPORTANT: Use the ID detected from Telegram (currentTgId)
-            // instead of the hardcoded PHP ID
             formData.append('type', type);
             formData.append('tg_id', currentTgId); 
             formData.append('asset', 'USDT');
@@ -333,6 +409,9 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
                         alert("✅ " + data.message);
                     }
                     form.reset();
+                    // Reset visibility logic after reset
+                    if(type === 'sell') toggleSellPaymentFields(); 
+                    
                     setTimeout(() => { window.location.href = 'history.php'; }, 1000);
                 } else {
                     showError("⚠️ " + data.message);
