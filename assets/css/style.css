@@ -233,6 +233,7 @@ input:focus, select:focus {
 .text-center { text-align: center; }
 .mt-2 { margin-top: 10px; }
 
+/* Focus and Outline Fixes */
 button:focus, 
 input:focus, 
 select:focus, 
@@ -240,4 +241,55 @@ textarea:focus,
 .form-control:focus {
     outline: none !important;
     box-shadow: none !important;
+}
+
+/* -----------------------------------------------------------
+   NEW ADDITIONS: Swap Modal Spacing & Toast Notifications
+   ----------------------------------------------------------- */
+
+/* Fix: Swap Modal Spacing */
+#swapModal .swap-spacer {
+    margin-bottom: 25px !important;
+}
+
+#swapModal button {
+    margin-top: 15px;
+}
+
+#swapModal input {
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+/* Toast Notification (Error/Success Messages) */
+#toast {
+    visibility: hidden;
+    min-width: 250px;
+    background-color: #ff4d4d; /* Default Red for Error */
+    color: #fff;
+    text-align: center;
+    border-radius: 50px;
+    padding: 16px;
+    position: fixed;
+    z-index: 3000;
+    left: 50%;
+    bottom: 30px;
+    transform: translateX(-50%);
+    font-size: 14px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
+
+#toast.show {
+    visibility: visible;
+    animation: fadein 0.5s, fadeout 0.5s 2.5s;
+}
+
+@keyframes fadein {
+    from {bottom: 0; opacity: 0;}
+    to {bottom: 30px; opacity: 1;}
+}
+
+@keyframes fadeout {
+    from {bottom: 30px; opacity: 1;}
+    to {bottom: 0; opacity: 0;}
 }
