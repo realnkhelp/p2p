@@ -1,11 +1,7 @@
-/* Theme: Honey Bux (Dark & Gold)
-File: assets/css/style.css 
-*/
-
 :root {
-    --primary-gold: #FFD700;      /* Honey Gold */
-    --bg-dark: #000000;           /* Deep Black */
-    --card-bg: #1a1a1a;           /* Dark Gray for Cards */
+    --primary-gold: #FFD700;
+    --bg-dark: #000000;
+    --card-bg: #1a1a1a;
     --text-white: #ffffff;
     --text-gray: #aaaaaa;
     --danger: #ff4d4d;
@@ -17,31 +13,29 @@ File: assets/css/style.css
     margin: 0;
     padding: 0;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    -webkit-tap-highlight-color: transparent;
 }
 
 body {
     background-color: var(--bg-dark);
     color: var(--text-white);
-    /* Agar Background Image lagana ho to niche URL dalein */
     background-image: url('../images/bg.jpg'); 
     background-size: cover;
     background-attachment: fixed;
     background-position: center;
-    padding-top: 90px; /* Header ke liye jagah */
-    padding-bottom: 80px; /* Footer ke liye jagah */
+    padding-top: 90px;
+    padding-bottom: 80px;
     min-height: 100vh;
 }
 
-/* Background Overlay (Text readable banane ke liye) */
 body::before {
     content: "";
     position: fixed;
     top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0, 0, 0, 0.85); /* 85% Dark Overlay */
+    background: rgba(0, 0, 0, 0.85);
     z-index: -1;
 }
 
-/* --- Sticky Header (Pill Shape) --- */
 .sticky-header {
     position: fixed;
     top: 15px;
@@ -87,7 +81,6 @@ body::before {
     cursor: pointer;
 }
 
-/* --- Cards & Containers --- */
 .container {
     padding: 0 15px;
 }
@@ -105,7 +98,6 @@ body::before {
     border: 1px solid var(--primary-gold);
 }
 
-/* --- Buttons --- */
 .btn {
     width: 100%;
     padding: 12px;
@@ -132,7 +124,6 @@ body::before {
     margin-bottom: 15px;
 }
 
-/* --- Form Elements --- */
 .form-group {
     margin-bottom: 15px;
     text-align: left;
@@ -159,7 +150,6 @@ input:focus, select:focus {
     border-color: var(--primary-gold);
 }
 
-/* --- Bottom Navigation --- */
 .bottom-nav {
     position: fixed;
     bottom: 0;
@@ -171,6 +161,10 @@ input:focus, select:focus {
     justify-content: space-around;
     padding: 10px 0;
     z-index: 1000;
+}
+
+.bottom-nav.keyboard-active {
+    display: none !important;
 }
 
 .nav-item {
@@ -191,7 +185,6 @@ input:focus, select:focus {
     font-size: 20px;
 }
 
-/* --- Wallet & Assets --- */
 .balance-card {
     text-align: center;
     background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
@@ -223,7 +216,6 @@ input:focus, select:focus {
     border-radius: 50%;
 }
 
-/* --- Invite Section --- */
 .invite-link-box {
     background: #333;
     padding: 10px;
@@ -235,9 +227,17 @@ input:focus, select:focus {
     margin: 10px 0;
 }
 
-/* --- Helpers --- */
 .text-gold { color: var(--primary-gold); }
 .text-red { color: var(--danger); }
 .text-green { color: var(--success); }
 .text-center { text-align: center; }
 .mt-2 { margin-top: 10px; }
+
+button:focus, 
+input:focus, 
+select:focus, 
+textarea:focus, 
+.form-control:focus {
+    outline: none !important;
+    box-shadow: none !important;
+}
