@@ -1,37 +1,37 @@
 <?php
 /*
 File: wallet.php
-Purpose: Advanced Crypto Wallet (Deposit, Withdraw, Real-time Swap)
+Purpose: Wallet with Balance Checks, Swap Logic & History Saving
 */
-
 require_once 'includes/functions.php';
 
-// 1. Fetch Settings & Limits from DB
+// 1. Fetch Settings & Limits
 $settings = getSettings($pdo);
-
-// Limits (Fallback to defaults if not set in DB)
 $min_deposit = $settings['min_deposit_limit'] ?? 1.0;
 $min_withdraw = $settings['min_withdraw_limit'] ?? 10.0;
 $min_swap = $settings['min_swap_limit'] ?? 5.0;
 
-// 2. User Setup
-$tg_id = 123456789; // Default for testing
+// 2. User Setup (Telegram ID se login)
+$tg_id = 123456789; // Default testing
 if (isset($_GET['tg_id'])) $tg_id = cleanInput($_GET['tg_id']);
 $user = getOrCreateUser($pdo, $tg_id, "Guest", "guest");
 
-// 3. Dynamic Assets List (Simulated from Admin Panel DB)
-// In real usage, fetch this via: $assets = $pdo->query("SELECT * FROM assets WHERE status='active'")->fetchAll();
-$assets = [
-    ['symbol' => 'USDT', 'name' => 'Tether', 'network' => 'TRC20', 'icon' => 'https://cryptologos.cc/logos/tether-usdt-logo.png', 'type' => 'stable'],
-    ['symbol' => 'TON', 'name' => 'Toncoin', 'network' => 'TON', 'icon' => 'https://cryptologos.cc/logos/toncoin-ton-logo.png', 'type' => 'crypto'],
-    ['symbol' => 'BTC', 'name' => 'Bitcoin', 'network' => 'BTC', 'icon' => 'https://cryptologos.cc/logos/bitcoin-btc-logo.png', 'type' => 'crypto'],
-    ['symbol' => 'BNB', 'name' => 'BNB', 'network' => 'BEP20', 'icon' => 'https://cryptologos.cc/logos/bnb-bnb-logo.png', 'type' => 'crypto'],
-    ['symbol' => 'TRX', 'name' => 'Tron', 'network' => 'TRC20', 'icon' => 'https://cryptologos.cc/logos/tron-trx-logo.png', 'type' => 'crypto']
-];
+// 3. Dynamic Assets from DB
+// (Admin panel se add kiye gaye coins yahan dikhenge)
+$assets = $pdo->query("SELECT * FROM assets WHERE is_active=1")->fetchAll(PDO::FETCH_ASSOC);
 
-// Helper function to get user balance
+// Fallback agar DB khali ho (Demo ke liye)
+if(empty($assets)) {
+    $assets = [
+        ['symbol' => 'USDT', 'name' => 'Tether', 'network' => 'TRC20', 'icon_url' => 'https://cryptologos.cc/logos/tether-usdt-logo.png'],
+        ['symbol' => 'TON', 'name' => 'Toncoin', 'network' => 'TON', 'icon_url' => 'https://cryptologos.cc/logos/toncoin-ton-logo.png'],
+        ['symbol' => 'BTC', 'name' => 'Bitcoin', 'network' => 'BTC', 'icon_url' => 'https://cryptologos.cc/logos/bitcoin-btc-logo.png']
+    ];
+}
+
+// Helper: Get Balance
 function getBal($pdo, $uid, $symbol) {
-    return number_format(getUserBalance($pdo, $uid, $symbol), 4);
+    return getUserBalance($pdo, $uid, $symbol);
 }
 ?>
 
@@ -41,621 +41,457 @@ function getBal($pdo, $uid, $symbol) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>My Wallet</title>
-    
     <link rel="stylesheet" href="assets/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    
     <style>
-        /* --- BLUR MODAL STYLE --- */
+        /* Custom Styles specifically for Wallet Page */
         .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.6); /* Dark see-through */
-            backdrop-filter: blur(12px); /* STRONG BLUR EFFECT */
-            -webkit-backdrop-filter: blur(12px);
-            z-index: 2000;
-            padding: 20px;
-            overflow-y: auto;
-            animation: fadeIn 0.3s ease;
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(10px); z-index: 2000;
+            padding: 20px; overflow-y: auto;
         }
 
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-
-        /* --- ASSET ROW STYLE --- */
+        /* Asset Row Styling (Requested: Name ke bagal me network) */
         .asset-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: rgba(255, 255, 255, 0.03);
-            margin-bottom: 12px;
-            padding: 12px;
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex; justify-content: space-between; align-items: center;
+            background: rgba(255, 255, 255, 0.05); margin-bottom: 10px; padding: 15px;
+            border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.05);
         }
-        .asset-left { display: flex; align-items: center; gap: 12px; }
+        .asset-info { display: flex; align-items: center; gap: 12px; }
         .asset-icon { width: 40px; height: 40px; border-radius: 50%; }
-        .asset-name { font-weight: bold; font-size: 15px; color: #fff; }
-        .asset-network { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 4px; color: #aaa; margin-left: 5px; }
-        .asset-price { font-size: 12px; color: #aaa; margin-top: 2px; }
+        
+        .coin-title { font-weight: bold; font-size: 16px; color: #fff; display: flex; align-items: center; gap: 8px; }
+        .network-badge { font-size: 10px; background: gold; color: #000; padding: 2px 5px; border-radius: 4px; font-weight: bold; }
+        
+        .coin-price { font-size: 12px; color: #aaa; margin-top: 3px; }
         .price-up { color: #0ecb81; }
-        .price-down { color: #f6465d; }
-        .asset-balance-val { font-size: 12px; color: #aaa; text-align: right; }
+        .price-down { color: #ff4d4d; }
 
-        /* --- SWAP UI STYLE --- */
-        .swap-container {
-            background: #1a1a1a;
-            border-radius: 16px;
-            padding: 20px;
-            position: relative;
-            border: 1px solid #333;
-        }
-        .swap-box {
-            background: #252525;
-            border-radius: 12px;
-            padding: 15px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 5px;
-        }
-        .swap-label { font-size: 12px; color: #888; margin-bottom: 5px; }
-        .token-selector {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: #333;
-            padding: 5px 12px;
-            border-radius: 20px;
-            cursor: pointer;
-            transition: 0.2s;
-        }
-        .token-selector:active { transform: scale(0.95); }
-        .token-img { width: 24px; height: 24px; border-radius: 50%; }
-        .swap-input {
-            background: transparent;
-            border: none;
-            color: white;
-            font-size: 20px;
-            text-align: right;
-            width: 120px;
-            outline: none;
-        }
-        .swap-divider {
-            display: flex;
-            justify-content: center;
-            margin: -15px 0;
-            position: relative;
-            z-index: 10;
-        }
-        .swap-icon-btn {
-            background: #333;
-            border: 2px solid #1a1a1a;
-            color: gold;
-            width: 35px; height: 35px;
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            cursor: pointer;
-        }
+        /* Swap Modal Spacing (Requested Clean Look) */
+        .swap-spacer { margin-bottom: 20px; }
+        .swap-input-group { background: #222; padding: 15px; border-radius: 12px; border: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
+        .swap-input { background: transparent; border: none; color: white; text-align: right; font-size: 18px; width: 120px; outline: none; }
         
-        .percentage-row {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
-            margin-bottom: 20px;
-        }
-        .percent-btn {
-            flex: 1;
-            background: #333;
-            border: none;
-            color: #aaa;
-            font-size: 12px;
-            padding: 5px;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        
-        /* Token Selection Modal */
-        .token-list-item {
-            display: flex;
-            align-items: center;
-            padding: 12px;
-            border-bottom: 1px solid #333;
-            cursor: pointer;
-        }
-        .token-list-item:hover { background: #222; }
+        /* Token Selector */
+        .token-sel { display: flex; align-items: center; gap: 8px; background: #333; padding: 5px 10px; border-radius: 20px; cursor: pointer; }
+        .token-sel img { width: 24px; height: 24px; border-radius: 50%; }
 
-        /* Review Page Details */
-        .review-row {
-            display: flex;
-            justify-content: space-between;
-            font-size: 13px;
-            margin-bottom: 10px;
-            color: #ccc;
+        /* Notification Toast */
+        #toast {
+            visibility: hidden; min-width: 250px; background-color: #ff4d4d; color: #fff; text-align: center;
+            border-radius: 8px; padding: 16px; position: fixed; z-index: 3000; left: 50%; bottom: 80px;
+            transform: translateX(-50%); font-size: 14px;
         }
+        #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
+        @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 80px; opacity: 1;} }
+        @keyframes fadeout { from {bottom: 80px; opacity: 1;} to {bottom: 0; opacity: 0;} }
     </style>
 </head>
 <body>
 
     <div class="sticky-header">
         <div class="profile-section">
-            <img src="assets/images/user.png" onerror="this.src='https://via.placeholder.com/40'" class="profile-pic">
+            <img src="assets/images/user.png" id="userAvatar" class="profile-pic">
             <div>
-                <div class="user-name"><?php echo $user['first_name']; ?></div>
-                <div style="font-size: 10px; color: gold;">Wallet Access</div>
+                <div class="user-name" id="userName"><?php echo $user['first_name']; ?></div>
+                <div style="font-size: 10px; color: gold;">Wallet</div>
             </div>
         </div>
-        <button class="settings-btn"><i class="fa-solid fa-shield-halved"></i></button>
+        <button class="settings-btn" onclick="location.reload()"><i class="fa-solid fa-rotate"></i></button>
     </div>
 
     <div class="container" style="margin-top: 20px; margin-bottom: 80px;">
 
         <div class="balance-card">
-            <p style="font-size: 14px; opacity: 0.8;">Total Estimated Balance</p>
-            <h1 style="margin: 10px 0;">$<span id="totalUsdBalance">0.00</span></h1>
+            <p style="font-size: 12px; opacity: 0.7; color: black;">Total Portfolio Value</p>
+            <h1 style="margin: 5px 0; color: black;">$<span id="totalUsdBalance">0.00</span></h1>
             
-            <div style="display: flex; justify-content: center; gap: 15px; margin-top: 15px;">
-                <button class="btn" onclick="openModal('depositModal')" style="background: rgba(0,0,0,0.3); width: auto; color: #fff;">
+            <div style="display: flex; justify-content: center; gap: 10px; margin-top: 15px;">
+                <button class="btn" onclick="openModal('depositModal')" style="background: rgba(0,0,0,0.8); color: gold; width: auto; font-size: 12px;">
                     <i class="fa-solid fa-arrow-down"></i> Deposit
                 </button>
-                <button class="btn" onclick="openModal('withdrawModal')" style="background: rgba(0,0,0,0.3); width: auto; color: #fff;">
+                <button class="btn" onclick="openModal('withdrawModal')" style="background: rgba(0,0,0,0.8); color: white; width: auto; font-size: 12px;">
                     <i class="fa-solid fa-arrow-up"></i> Withdraw
                 </button>
-                <button class="btn" onclick="openModal('swapModal')" style="background: rgba(0,0,0,0.3); width: auto; color: #fff;">
-                    <i class="fa-solid fa-rotate"></i> Swap
+                <button class="btn" onclick="openModal('swapModal')" style="background: rgba(0,0,0,0.8); color: #0ecb81; width: auto; font-size: 12px;">
+                    <i class="fa-solid fa-repeat"></i> Swap
                 </button>
             </div>
         </div>
 
-        <h3 style="margin-bottom: 15px; color: gold;">Your Assets</h3>
-        
+        <h4 style="margin-bottom: 10px; color: gold;">Crypto Assets</h4>
         <div id="assetsList">
             <?php foreach ($assets as $coin): 
-                $balance = getBal($pdo, $user['id'], $coin['symbol']);
+                $balance = getBal($pdo, $user['telegram_id'], $coin['symbol']);
             ?>
-            <div class="asset-row" id="row_<?php echo $coin['symbol']; ?>">
-                <div class="asset-left">
-                    <img src="<?php echo $coin['icon']; ?>" class="asset-icon">
+            <div class="asset-row">
+                <div class="asset-info">
+                    <img src="<?php echo $coin['icon_url']; ?>" class="asset-icon">
                     <div>
-                        <div class="asset-name">
-                            <?php echo $coin['symbol']; ?> 
-                            <span class="asset-network"><?php echo $coin['network']; ?></span>
+                        <div class="coin-title">
+                            <?php echo $coin['name']; ?> 
+                            <span class="network-badge"><?php echo $coin['network']; ?></span>
                         </div>
-                        <div class="asset-price">
+                        <div class="coin-price">
                             $<span class="live-price" data-symbol="<?php echo $coin['symbol']; ?>">0.00</span>
-                            <span class="price-change" data-symbol="<?php echo $coin['symbol']; ?>"></span>
+                            <span class="price-change" data-symbol="<?php echo $coin['symbol']; ?>">0.00%</span>
                         </div>
                     </div>
                 </div>
                 <div style="text-align: right;">
-                    <div style="font-weight: bold; font-size: 15px;"><?php echo $balance; ?></div>
-                    <div class="asset-balance-val">$<span class="balance-usd" data-symbol="<?php echo $coin['symbol']; ?>" data-bal="<?php echo $balance; ?>">0.00</span></div>
+                    <div style="font-weight: bold; color: white; font-size: 15px;">
+                        <span id="bal_qty_<?php echo $coin['symbol']; ?>"><?php echo number_format($balance, 6); ?></span>
+                    </div>
+                    <div style="font-size: 12px; color: #888;">
+                        $<span class="balance-usd" data-symbol="<?php echo $coin['symbol']; ?>" data-bal="<?php echo $balance; ?>">0.00</span>
+                    </div>
                 </div>
             </div>
             <?php endforeach; ?>
         </div>
-
     </div>
 
     <div id="depositModal" class="modal-overlay">
-        <div style="text-align: right;">
-            <button onclick="closeModal('depositModal')" style="background:none; border:none; color:white; font-size: 24px;">&times;</button>
-        </div>
-        <h2 class="text-center text-gold">Deposit Crypto</h2>
+        <div style="text-align: right;"><i class="fa-solid fa-xmark" onclick="closeModal('depositModal')" style="font-size: 24px; color: #fff;"></i></div>
+        <h2 class="text-center text-gold mb-3">Deposit Crypto</h2>
         
-        <form style="margin-top: 20px;">
-            <div class="form-group">
-                <label>Select Asset</label>
-                <select id="depAsset" class="form-control" onchange="updateDepAddress()">
-                    <?php foreach($assets as $c) echo "<option value='{$c['symbol']}'>{$c['symbol']} ({$c['network']})</option>"; ?>
-                </select>
-            </div>
+        <label>Select Asset</label>
+        <select id="depAsset" class="form-control mb-3" onchange="updateDepAddress()">
+            <?php foreach($assets as $c) echo "<option value='{$c['symbol']}' data-addr='{$settings['admin_wallets_json']}'>{$c['symbol']} ({$c['network']})</option>"; ?>
+        </select>
 
-            <div class="card" style="text-align: center; border: 1px dashed gold; padding: 15px; background: rgba(0,0,0,0.4);">
-                <p style="font-size: 12px; color: #aaa;">Send only selected coin to this address:</p>
-                <div class="invite-link-box" id="depAddressText" style="font-size: 12px; word-break: break-all;">
-                    Loading Address...
-                </div>
-                <button type="button" class="btn btn-sm mt-2" onclick="copyText('depAddressText')" style="background: gold; color: black;">Copy Address</button>
-            </div>
+        <div class="card" style="text-align: center; border: 1px dashed gold; background: #222; padding: 15px;">
+            <p style="color: #aaa; font-size: 11px;">Send selected coin to this address:</p>
+            <div id="depAddressText" style="color: gold; font-family: monospace; word-break: break-all; font-size: 12px; margin: 10px 0;">Select Coin...</div>
+            <button class="btn" onclick="copyText('depAddressText')" style="background: gold; color: black; padding: 5px 10px; width: auto; font-size: 12px;">Copy Address</button>
+        </div>
 
-            <div class="form-group mt-3">
-                <label>Amount Sent</label>
-                <input type="number" id="depAmount" placeholder="Min <?php echo $min_deposit; ?>" required>
-            </div>
-            <div class="form-group">
-                <label>Transaction Hash (TXID)</label>
-                <input type="text" id="depTxid" placeholder="Paste Transaction Hash" required>
-            </div>
+        <label class="mt-3">Amount</label>
+        <input type="number" id="depAmount" placeholder="Min <?php echo $min_deposit; ?>" class="mb-3">
 
-            <button type="button" class="btn btn-success" onclick="submitDeposit()">Submit Deposit</button>
-        </form>
+        <label>Transaction Hash</label>
+        <input type="text" id="depTxid" placeholder="Paste TXID" class="mb-3">
+
+        <button class="btn btn-success" onclick="submitDeposit()">Submit Deposit</button>
     </div>
 
     <div id="withdrawModal" class="modal-overlay">
-        <div style="text-align: right;">
-            <button onclick="closeModal('withdrawModal')" style="background:none; border:none; color:white; font-size: 24px;">&times;</button>
-        </div>
-        <h2 class="text-center text-red">Withdraw</h2>
+        <div style="text-align: right;"><i class="fa-solid fa-xmark" onclick="closeModal('withdrawModal')" style="font-size: 24px; color: #fff;"></i></div>
+        <h2 class="text-center text-red mb-3">Withdraw</h2>
         
-        <form style="margin-top: 20px;">
-            <div class="form-group">
-                <label>Select Asset</label>
-                <select id="wdAsset" class="form-control">
-                    <?php foreach($assets as $c) echo "<option value='{$c['symbol']}'>{$c['symbol']} ({$c['network']})</option>"; ?>
-                </select>
-            </div>
-            <div class="form-group">
-                <label>Destination Address</label>
-                <input type="text" id="wdAddress" placeholder="Enter Wallet Address" required>
-            </div>
-            <div class="form-group">
-                <label>Amount (Min $<?php echo $min_withdraw; ?>)</label>
-                <input type="number" id="wdAmount" placeholder="0.00" required>
-            </div>
-            <button type="button" class="btn btn-danger" onclick="submitWithdraw()">Request Withdrawal</button>
-        </form>
+        <label>Select Asset</label>
+        <select id="wdAsset" class="form-control mb-3" onchange="updateWdBal()">
+            <?php foreach($assets as $c) echo "<option value='{$c['symbol']}'>{$c['symbol']} ({$c['network']})</option>"; ?>
+        </select>
+        <p style="text-align: right; font-size: 11px; color: #aaa; margin-top: -10px;">Available: <span id="wdAvailBal">0.00</span></p>
+
+        <label>Wallet Address</label>
+        <input type="text" id="wdAddress" placeholder="Paste Wallet Address" class="mb-3">
+
+        <label>Amount (Min $<?php echo $min_withdraw; ?>)</label>
+        <input type="number" id="wdAmount" placeholder="0.00" class="mb-3">
+
+        <button class="btn btn-danger" onclick="submitWithdraw()">Request Withdrawal</button>
     </div>
 
     <div id="swapModal" class="modal-overlay">
-        <div style="text-align: right;">
-            <button onclick="closeModal('swapModal')" style="background:none; border:none; color:white; font-size: 24px;">&times;</button>
-        </div>
+        <div style="text-align: right;"><i class="fa-solid fa-xmark" onclick="closeModal('swapModal')" style="font-size: 24px; color: #fff;"></i></div>
         
         <div id="swapStep1">
-            <h2 class="text-center text-gold mb-3">Swap Crypto</h2>
-            
-            <div class="swap-container">
-                <div class="swap-label">From</div>
-                <div class="swap-box">
-                    <div class="token-selector" onclick="openTokenSelect('from')">
-                        <img src="" id="swapFromIcon" class="token-img">
-                        <span id="swapFromSymbol" style="font-weight: bold;">--</span>
-                        <i class="fa-solid fa-angle-down" style="font-size: 10px;"></i>
-                    </div>
-                    <input type="number" id="swapFromInput" class="swap-input" placeholder="0" oninput="calcSwapOutput()">
-                </div>
-                <div style="text-align: right; font-size: 11px; color: #aaa; margin-top: -5px; margin-bottom: 10px;">
-                    Available: <span id="swapFromBal">0.00</span>
-                </div>
+            <h2 class="text-center text-gold" style="margin-bottom: 25px;">Swap Crypto</h2>
 
-                <div class="swap-divider">
-                    <div class="swap-icon-btn" onclick="flipSwap()">
-                        <i class="fa-solid fa-arrow-down"></i>
-                    </div>
+            <label style="color: #aaa; font-size: 12px;">From</label>
+            <div class="swap-input-group swap-spacer">
+                <div class="token-sel" onclick="cycleToken('from')">
+                    <img src="" id="swapFromIcon">
+                    <span id="swapFromSym">USDT</span>
+                    <i class="fa-solid fa-caret-down"></i>
                 </div>
-
-                <div class="swap-label" style="margin-top: 5px;">To (Estimate)</div>
-                <div class="swap-box">
-                    <div class="token-selector" onclick="openTokenSelect('to')">
-                        <img src="" id="swapToIcon" class="token-img">
-                        <span id="swapToSymbol" style="font-weight: bold;">--</span>
-                        <i class="fa-solid fa-angle-down" style="font-size: 10px;"></i>
-                    </div>
-                    <input type="number" id="swapToInput" class="swap-input" placeholder="0" readonly>
-                </div>
-
-                <div class="percentage-row">
-                    <button class="percent-btn" onclick="setSwapPercent(0.25)">25%</button>
-                    <button class="percent-btn" onclick="setSwapPercent(0.50)">50%</button>
-                    <button class="percent-btn" onclick="setSwapPercent(1.00)">MAX</button>
-                </div>
-
-                <button class="btn btn-primary" onclick="goToReview()">Review and Swap</button>
+                <input type="number" id="swapFromInput" placeholder="0" class="swap-input" oninput="calcSwap()">
             </div>
+            <div style="text-align: right; font-size: 11px; color: #aaa; margin-top: -15px; margin-bottom: 20px;">
+                Available: <span id="swapFromBal" style="color: white;">0.00</span>
+            </div>
+
+            <div style="text-align: center; margin-bottom: 20px;">
+                <div style="background: #333; width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; border: 1px solid gold;">
+                    <i class="fa-solid fa-arrow-down" style="color: gold;"></i>
+                </div>
+            </div>
+
+            <label style="color: #aaa; font-size: 12px;">To (Estimate)</label>
+            <div class="swap-input-group swap-spacer">
+                <div class="token-sel" onclick="cycleToken('to')">
+                    <img src="" id="swapToIcon">
+                    <span id="swapToSym">TON</span>
+                    <i class="fa-solid fa-caret-down"></i>
+                </div>
+                <input type="number" id="swapToInput" placeholder="0" class="swap-input" readonly>
+            </div>
+
+            <div style="display: flex; gap: 10px; margin-bottom: 25px;">
+                <button class="btn" onclick="setPercent(0.25)" style="background: #333; font-size: 12px; padding: 8px;">25%</button>
+                <button class="btn" onclick="setPercent(0.50)" style="background: #333; font-size: 12px; padding: 8px;">50%</button>
+                <button class="btn" onclick="setPercent(1.00)" style="background: #333; font-size: 12px; padding: 8px;">MAX</button>
+            </div>
+
+            <button class="btn btn-primary" onclick="checkSwapRequirement()">Review Swap</button>
         </div>
 
         <div id="swapStep2" style="display: none;">
-            <h2 class="text-center text-gold mb-3">Review and Swap</h2>
-            
+            <h2 class="text-center text-gold mb-3">Review Swap</h2>
             <div class="card" style="border: 1px solid gold;">
-                <div class="text-center mb-3">
-                    <h1 style="color: #f6465d;">- <span id="reviewSendAmt">0</span> <span id="reviewSendSym">USDT</span></h1>
-                    <i class="fa-solid fa-arrow-down" style="color: #aaa;"></i>
-                    <h1 style="color: #0ecb81;">+ <span id="reviewGetAmt">0</span> <span id="reviewGetSym">TON</span></h1>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="font-size: 20px; color: #ff4d4d;">- <span id="revPay">0</span> <span id="revPaySym"></span></div>
+                    <i class="fa-solid fa-arrow-right" style="color: #aaa;"></i>
+                    <div style="font-size: 20px; color: #0ecb81;">+ <span id="revGet">0</span> <span id="revGetSym"></span></div>
                 </div>
-
-                <hr style="border-color: #333;">
-
-                <div class="review-row">
-                    <span>Order Type</span>
-                    <span>Market Order</span>
-                </div>
-                <div class="review-row">
-                    <span>Rate</span>
-                    <span id="reviewRate">1 USDT = ...</span>
-                </div>
-                <div class="review-row">
-                    <span>Fee</span>
-                    <span>0%</span>
-                </div>
-                
-                <button class="btn btn-success mt-3" onclick="submitSwap()">Swap Now</button>
-                <button class="btn btn-outline mt-2" onclick="backToSwapInput()" style="background:transparent; border:1px solid #444; color: #aaa;">Cancel</button>
-            </div>
-        </div>
-
-    </div>
-
-    <div id="tokenModal" class="modal-overlay" style="z-index: 2100;">
-        <div style="background: #1a1a1a; min-height: 50vh; border-radius: 20px 20px 0 0; position: absolute; bottom: 0; width: 100%; left:0;">
-            <div style="padding: 15px; border-bottom: 1px solid #333; display: flex; justify-content: space-between;">
-                <h3 style="color: white;">Select Token</h3>
-                <span onclick="document.getElementById('tokenModal').style.display='none'" style="font-size: 20px; cursor: pointer;">&times;</span>
-            </div>
-            
-            <div style="padding: 10px;">
-                <input type="text" placeholder="Search..." style="width: 100%; background: #222; border: none; padding: 10px; border-radius: 8px; color: white;">
-            </div>
-
-            <div style="max-height: 400px; overflow-y: auto;">
-                <?php foreach($assets as $c): 
-                     $bal = getBal($pdo, $user['id'], $c['symbol']);
-                ?>
-                <div class="token-list-item" onclick="selectToken('<?php echo $c['symbol']; ?>', '<?php echo $c['icon']; ?>', <?php echo $bal; ?>)">
-                    <img src="<?php echo $c['icon']; ?>" style="width: 32px; height: 32px; border-radius: 50%; margin-right: 15px;">
-                    <div style="flex: 1;">
-                        <div style="font-weight: bold; color: white;"><?php echo $c['symbol']; ?></div>
-                        <div style="font-size: 11px; color: #aaa;"><?php echo $c['name']; ?></div>
-                    </div>
-                    <div style="text-align: right; font-size: 12px; color: gold;">
-                        <?php echo $bal; ?>
-                    </div>
-                </div>
-                <?php endforeach; ?>
+                <hr style="border-color: #333; margin: 15px 0;">
+                <p style="font-size: 12px; color: #aaa; text-align: center;">Transaction will be recorded in history immediately.</p>
+                <button class="btn btn-success mt-3" onclick="confirmSwap()">Confirm & Swap</button>
+                <button class="btn mt-2" onclick="document.getElementById('swapStep2').style.display='none'; document.getElementById('swapStep1').style.display='block';" style="background: transparent; border: 1px solid #555;">Cancel</button>
             </div>
         </div>
     </div>
 
+    <div id="toast">Error Message</div>
 
     <div class="bottom-nav">
-        <a href="index.php" class="nav-item">
-            <i class="fa-solid fa-house"></i>
-            <span>Home</span>
-        </a>
-        <a href="wallet.php" class="nav-item active">
-            <i class="fa-solid fa-wallet"></i>
-            <span>Wallet</span>
-        </a>
-        <a href="invite.php" class="nav-item">
-            <i class="fa-solid fa-user-plus"></i>
-            <span>Invite</span>
-        </a>
-        <a href="history.php" class="nav-item">
-            <i class="fa-solid fa-clock-rotate-left"></i>
-            <span>History</span>
-        </a>
+        <a href="index.php" class="nav-item"><i class="fa-solid fa-house"></i><span>Home</span></a>
+        <a href="wallet.php" class="nav-item active"><i class="fa-solid fa-wallet"></i><span>Wallet</span></a>
+        <a href="invite.php" class="nav-item"><i class="fa-solid fa-user-plus"></i><span>Invite</span></a>
+        <a href="history.php" class="nav-item"><i class="fa-solid fa-clock-rotate-left"></i><span>History</span></a>
     </div>
 
     <script>
-        // --- DATA & CONFIG ---
-        const limits = {
-            deposit: <?php echo $min_deposit; ?>,
-            withdraw: <?php echo $min_withdraw; ?>,
-            swap: <?php echo $min_swap; ?>
-        };
-
-        // Real-time prices object
+        // --- DATA SETUP ---
+        const assets = <?php echo json_encode($assets); ?>;
+        const limits = { dep: <?php echo $min_deposit; ?>, wd: <?php echo $min_withdraw; ?>, swap: <?php echo $min_swap; ?> };
         const prices = {}; 
-        
-        // Load PHP assets into JS
-        const assetData = <?php echo json_encode($assets); ?>;
-        
-        // --- 1. PRICE FETCHING (BINANCE API) ---
+        let currentTgId = <?php echo $tg_id; ?>;
+
+        // --- TELEGRAM AUTO SYNC ---
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+            const u = tg.initDataUnsafe.user;
+            currentTgId = u.id;
+            document.getElementById('userName').innerText = u.first_name;
+            if(u.photo_url) document.getElementById('userAvatar').src = u.photo_url;
+        }
+
+        // --- 1. LIVE PRICES & BALANCES ---
         async function fetchPrices() {
+            // Demo logic: USDT=1. Others random variation for demo feel
+            prices['USDT'] = 1.00;
+            
+            // Binance API for real prices
             try {
-                // Fetch basic prices (USDT base)
-                // Note: For demo, we assume USDT = 1.
-                prices['USDT'] = 1.00; 
-
-                // Fetch others
-                const symbols = assetData.filter(a => a.symbol !== 'USDT').map(a => a.symbol + 'USDT');
-                
-                for(let pair of symbols) {
-                    let res = await fetch('https://api.binance.com/api/v3/ticker/24hr?symbol=' + pair);
-                    let data = await res.json();
+                const pairs = assets.filter(a => a.symbol !== 'USDT').map(a => a.symbol + 'USDT');
+                for(let p of pairs) {
+                    let res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${p}`);
+                    let d = await res.json();
+                    let sym = p.replace('USDT','');
+                    prices[sym] = parseFloat(d.lastPrice);
                     
-                    let symbol = pair.replace('USDT', '');
-                    let price = parseFloat(data.lastPrice);
-                    let change = parseFloat(data.priceChangePercent);
-                    
-                    prices[symbol] = price;
-                    
-                    // Update DOM
-                    updateAssetRow(symbol, price, change);
+                    // UI Update
+                    document.querySelector(`.live-price[data-symbol='${sym}']`).innerText = parseFloat(d.lastPrice).toFixed(4);
+                    let changeEl = document.querySelector(`.price-change[data-symbol='${sym}']`);
+                    let chg = parseFloat(d.priceChangePercent);
+                    changeEl.innerText = (chg>0?'+':'') + chg.toFixed(2) + '%';
+                    changeEl.className = `price-change ${chg>=0?'price-up':'price-down'}`;
                 }
-
-                updateTotalBalance();
-
-            } catch (e) {
-                console.error("Price fetch error", e);
-            }
+                updateTotal();
+            } catch(e) { console.log(e); }
         }
-
-        function updateAssetRow(symbol, price, change) {
-            // Price Text
-            let priceEls = document.querySelectorAll(`.live-price[data-symbol='${symbol}']`);
-            priceEls.forEach(el => el.innerText = price.toFixed(4));
-
-            // Change Arrow & Color
-            let changeEls = document.querySelectorAll(`.price-change[data-symbol='${symbol}']`);
-            changeEls.forEach(el => {
-                let icon = change >= 0 ? '<i class="fa fa-caret-up"></i>' : '<i class="fa fa-caret-down"></i>';
-                let colorClass = change >= 0 ? 'price-up' : 'price-down';
-                el.innerHTML = `${icon} ${change.toFixed(2)}%`;
-                el.className = `price-change ${colorClass}`;
-            });
-
-            // USD Balance Value
-            let balEls = document.querySelectorAll(`.balance-usd[data-symbol='${symbol}']`);
-            balEls.forEach(el => {
-                let amt = parseFloat(el.getAttribute('data-bal'));
-                el.innerText = (amt * price).toFixed(2);
-            });
-        }
-
-        function updateTotalBalance() {
+        
+        function updateTotal() {
             let total = 0;
-            document.querySelectorAll('.balance-usd').forEach(el => {
-                let val = parseFloat(el.innerText);
-                if(!isNaN(val)) total += val;
+            assets.forEach(a => {
+                let qty = parseFloat(document.getElementById(`bal_qty_${a.symbol}`).innerText.replace(/,/g,''));
+                let pr = prices[a.symbol] || 0;
+                let val = qty * pr;
+                total += val;
+                document.querySelector(`.balance-usd[data-symbol='${a.symbol}']`).innerText = val.toFixed(2);
             });
-            // Add USDT base value manually if not in loop above
-            let usdtBal = parseFloat(document.querySelector(`.balance-usd[data-symbol='USDT']`).getAttribute('data-bal'));
-            if(usdtBal) total += usdtBal; // USDT is 1:1
-
             document.getElementById('totalUsdBalance').innerText = total.toFixed(2);
         }
+        setInterval(fetchPrices, 10000); fetchPrices();
 
-        fetchPrices();
-        setInterval(fetchPrices, 10000); // Refresh every 10s
+        // --- 2. SWAP LOGIC ---
+        let swapFrom = assets[0]; // Default
+        let swapTo = assets[1] || assets[0];
 
-        // --- 2. MODAL LOGIC ---
-        function openModal(id) { 
-            document.getElementById(id).style.display = 'block'; 
-            if(id === 'swapModal') initSwap();
-        }
-        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
-        
-        function copyText(id) {
-            let text = document.getElementById(id).innerText;
-            navigator.clipboard.writeText(text);
-            alert("Copied!");
-        }
-
-        // --- 3. SWAP LOGIC ---
-        let swapState = { from: 'USDT', to: 'TON', selectorMode: null };
-
-        function initSwap() {
-            // Set defaults
-            setTokenUI('from', assetData[0]); // USDT
-            setTokenUI('to', assetData[1]); // TON
-            document.getElementById('swapStep1').style.display = 'block';
-            document.getElementById('swapStep2').style.display = 'none';
-        }
-
-        function openTokenSelect(mode) {
-            swapState.selectorMode = mode; // 'from' or 'to'
-            document.getElementById('tokenModal').style.display = 'block';
-        }
-
-        function selectToken(symbol, icon, bal) {
-            let mode = swapState.selectorMode;
-            let tokenObj = assetData.find(a => a.symbol === symbol);
+        function initSwapUI() {
+            document.getElementById('swapFromIcon').src = swapFrom.icon_url;
+            document.getElementById('swapFromSym').innerText = swapFrom.symbol;
+            document.getElementById('swapToIcon').src = swapTo.icon_url;
+            document.getElementById('swapToSym').innerText = swapTo.symbol;
             
-            if (mode === 'from') {
-                swapState.from = symbol;
-                document.getElementById('swapFromBal').innerText = bal;
-            } else {
-                swapState.to = symbol;
-            }
+            // Get Available Balance from DOM
+            let balText = document.getElementById(`bal_qty_${swapFrom.symbol}`).innerText;
+            document.getElementById('swapFromBal').innerText = balText;
+        }
+
+        function cycleToken(type) {
+            // Simple cycle for demo. Can be modal for full list
+            let curr = type === 'from' ? swapFrom : swapTo;
+            let idx = assets.findIndex(a => a.symbol === curr.symbol);
+            let next = assets[(idx + 1) % assets.length];
             
-            setTokenUI(mode, tokenObj);
-            document.getElementById('tokenModal').style.display = 'none';
-            calcSwapOutput();
-        }
+            if(type === 'from') swapFrom = next;
+            else swapTo = next;
 
-        function setTokenUI(mode, token) {
-            document.getElementById(`swap${mode.charAt(0).toUpperCase() + mode.slice(1)}Symbol`).innerText = token.symbol;
-            document.getElementById(`swap${mode.charAt(0).toUpperCase() + mode.slice(1)}Icon`).src = token.icon;
-        }
-
-        function flipSwap() {
-            // Swap symbols
-            let temp = swapState.from;
-            swapState.from = swapState.to;
-            swapState.to = temp;
+            // Prevent same token
+            if(swapFrom.symbol === swapTo.symbol) cycleToken('to');
             
-            // Re-render UI
-            let t1 = assetData.find(a => a.symbol === swapState.from);
-            let t2 = assetData.find(a => a.symbol === swapState.to);
-            setTokenUI('from', t1);
-            setTokenUI('to', t2);
-            
-            // Update Balance for new 'from'
-            let balEl = document.querySelector(`.balance-usd[data-symbol='${t1.symbol}']`); 
-            // Need actual balance quantity, not USD. Fetch from DOM logic or passed variable.
-            // Simplified: just reset input
-            document.getElementById('swapFromInput').value = '';
-            document.getElementById('swapToInput').value = '';
+            initSwapUI();
+            calcSwap();
         }
 
-        function setSwapPercent(pct) {
-            let bal = parseFloat(document.getElementById('swapFromBal').innerText);
-            if(bal > 0) {
-                document.getElementById('swapFromInput').value = (bal * pct).toFixed(4);
-                calcSwapOutput();
-            }
+        function setPercent(p) {
+            let bal = parseFloat(document.getElementById('swapFromBal').innerText.replace(/,/g,''));
+            document.getElementById('swapFromInput').value = (bal * p).toFixed(6);
+            calcSwap();
         }
 
-        function calcSwapOutput() {
+        function calcSwap() {
             let qty = parseFloat(document.getElementById('swapFromInput').value);
             if(!qty) { document.getElementById('swapToInput').value = ''; return; }
-
-            let pFrom = prices[swapState.from] || 1;
-            let pTo = prices[swapState.to] || 1;
-
-            // Logic: (Qty * PriceFrom) / PriceTo
-            let valUsd = qty * pFrom;
-            let qtyTo = valUsd / pTo;
-
-            document.getElementById('swapToInput').value = qtyTo.toFixed(6);
+            
+            let p1 = prices[swapFrom.symbol] || 1;
+            let p2 = prices[swapTo.symbol] || 1;
+            let out = (qty * p1) / p2;
+            document.getElementById('swapToInput').value = out.toFixed(6);
         }
 
-        function goToReview() {
+        function checkSwapRequirement() {
             let qty = parseFloat(document.getElementById('swapFromInput').value);
-            if(!qty || qty < limits.swap) {
-                alert(`Minimum swap amount is $${limits.swap} value.`);
+            let bal = parseFloat(document.getElementById('swapFromBal').innerText.replace(/,/g,''));
+
+            // Validation 1: Min Limit
+            if(!qty || qty * (prices[swapFrom.symbol]||1) < limits.swap) {
+                showToast(`Minimum swap value is $${limits.swap}`);
                 return;
             }
-            
-            // Populate Review
-            document.getElementById('reviewSendAmt').innerText = qty;
-            document.getElementById('reviewSendSym').innerText = swapState.from;
-            document.getElementById('reviewGetAmt').innerText = document.getElementById('swapToInput').value;
-            document.getElementById('reviewGetSym').innerText = swapState.to;
-            
-            // Rate
-            let pFrom = prices[swapState.from] || 1;
-            let pTo = prices[swapState.to] || 1;
-            let rate = pFrom / pTo;
-            document.getElementById('reviewRate').innerText = `1 ${swapState.from} ≈ ${rate.toFixed(4)} ${swapState.to}`;
 
-            // Switch Screen
-            document.getElementById('swapStep1').style.display = 'none';
-            document.getElementById('swapStep2').style.display = 'block';
-        }
+            // Validation 2: Insufficient Funds
+            if(qty > bal) {
+                showToast("Insufficient Balance!");
+                return;
+            }
 
-        function backToSwapInput() {
-            document.getElementById('swapStep1').style.display = 'block';
-            document.getElementById('swapStep2').style.display = 'none';
+            // Show Review
+            document.getElementById('revPay').innerText = qty;
+            document.getElementById('revPaySym').innerText = swapFrom.symbol;
+            document.getElementById('revGet').innerText = document.getElementById('swapToInput').value;
+            document.getElementById('revGetSym').innerText = swapTo.symbol;
+
+            document.getElementById('swapStep1').style.display='none';
+            document.getElementById('swapStep2').style.display='block';
         }
 
-        // --- 4. SUBMIT FUNCTIONS (MOCK) ---
-        function submitDeposit() {
-            alert("Deposit request submitted! Admin will approve.");
-            closeModal('depositModal');
+        function confirmSwap() {
+            let data = {
+                tg_id: currentTgId,
+                type: 'swap',
+                from_coin: swapFrom.symbol,
+                to_coin: swapTo.symbol,
+                amount: document.getElementById('swapFromInput').value,
+                receive_amount: document.getElementById('swapToInput').value
+            };
+            sendApiRequest(data, 'swapModal');
         }
-        function submitWithdraw() {
-            let amt = document.getElementById('wdAmount').value;
-            if(amt < limits.withdraw) { alert("Below min withdraw limit!"); return; }
-            alert("Withdraw request sent.");
-            closeModal('withdrawModal');
-        }
-        function submitSwap() {
-            alert("Swap Successful!");
-            closeModal('swapModal');
-            location.reload();
+
+        // --- 3. WITHDRAW LOGIC ---
+        function updateWdBal() {
+            let sym = document.getElementById('wdAsset').value;
+            let bal = document.getElementById(`bal_qty_${sym}`).innerText;
+            document.getElementById('wdAvailBal').innerText = bal + ' ' + sym;
         }
         
-        // Mock Address Update for Deposit
-        function updateDepAddress() {
-            // In real app, fetch from DB via API based on selected coin
-            document.getElementById('depAddressText').innerText = "T9yX....(Dynamic Address from Admin)...7z";
+        function submitWithdraw() {
+            let sym = document.getElementById('wdAsset').value;
+            let amt = parseFloat(document.getElementById('wdAmount').value);
+            let addr = document.getElementById('wdAddress').value;
+            let bal = parseFloat(document.getElementById(`bal_qty_${sym}`).innerText.replace(/,/g,''));
+
+            if(!amt || amt * (prices[sym]||1) < limits.wd) { showToast(`Min withdraw is $${limits.wd}`); return; }
+            if(amt > bal) { showToast("Insufficient Balance!"); return; }
+            if(!addr) { showToast("Enter Address"); return; }
+
+            let data = {
+                tg_id: currentTgId,
+                type: 'withdraw',
+                asset: sym,
+                amount: amt,
+                address: addr
+            };
+            sendApiRequest(data, 'withdrawModal');
         }
-        updateDepAddress(); // Init
+
+        // --- 4. DEPOSIT LOGIC ---
+        function updateDepAddress() {
+            let sym = document.getElementById('depAsset').value;
+            // Parse Admin Wallets JSON
+            let opt = document.querySelector(`#depAsset option[value='${sym}']`);
+            let json = JSON.parse(opt.getAttribute('data-addr') || '{}');
+            
+            // Logic to find address. Example assumes network keys like 'USDT_TRC20'
+            // For simplicity in this demo, showing general or matching key
+            let net = assets.find(a=>a.symbol===sym).network;
+            let key = sym + '_' + net; // e.g., USDT_TRC20
+            
+            document.getElementById('depAddressText').innerText = json[key] || json[sym] || "Contact Admin";
+        }
+
+        function submitDeposit() {
+            let amt = document.getElementById('depAmount').value;
+            let tx = document.getElementById('depTxid').value;
+            if(!amt || amt < limits.dep) { showToast(`Min deposit is $${limits.dep}`); return; }
+            if(!tx) { showToast("Enter TXID"); return; }
+
+            let data = {
+                tg_id: currentTgId,
+                type: 'deposit',
+                asset: document.getElementById('depAsset').value,
+                amount: amt,
+                tx_hash: tx
+            };
+            sendApiRequest(data, 'depositModal');
+        }
+
+        // --- API HANDLER ---
+        function sendApiRequest(data, modalId) {
+            fetch('api/submit_order.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(res => res.json())
+            .then(res => {
+                if(res.success) {
+                    showToast("Success! Transaction Recorded.");
+                    closeModal(modalId);
+                    setTimeout(() => location.reload(), 1500); // Reload to update balances
+                } else {
+                    showToast(res.message || "Error Occurred");
+                }
+            })
+            .catch(err => showToast("Network Error"));
+        }
+
+        // --- UTILS ---
+        function showToast(msg) {
+            let x = document.getElementById("toast");
+            x.innerText = msg;
+            x.className = "show";
+            setTimeout(function(){ x.className = x.className.replace("show", ""); }, 3000);
+        }
+        function openModal(id) { document.getElementById(id).style.display='block'; if(id==='swapModal') initSwapUI(); if(id==='withdrawModal') updateWdBal(); if(id==='depositModal') updateDepAddress(); }
+        function closeModal(id) { document.getElementById(id).style.display='none'; }
+        function copyText(id) { navigator.clipboard.writeText(document.getElementById(id).innerText); showToast("Copied!"); }
 
     </script>
 </body>

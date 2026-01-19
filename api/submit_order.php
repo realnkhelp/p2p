@@ -7,187 +7,156 @@ Purpose: Handle Buy, Sell, Deposit, Withdraw, and SWAP requests securely.
 header('Content-Type: application/json');
 require_once '../includes/functions.php';
 
-// 1. Request Method Check
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    echo json_encode(['status' => 'error', 'message' => 'Invalid Request Method']);
-    exit;
+// 1. Get JSON Input (Because modern Fetch API sends JSON)
+$input = json_decode(file_get_contents('php://input'), true);
+
+// If JSON fails, try standard POST (Fallback)
+if (!$input) {
+    $input = $_POST;
 }
 
 // 2. User Authentication (By Telegram ID)
-$tg_id = isset($_POST['tg_id']) ? cleanInput($_POST['tg_id']) : null;
+$tg_id = isset($input['tg_id']) ? cleanInput($input['tg_id']) : null;
 
 if (!$tg_id) {
-    echo json_encode(['status' => 'error', 'message' => 'User ID missing']);
+    echo json_encode(['success' => false, 'message' => 'User ID missing']);
     exit;
 }
 
-// Fetch user from DB (Functions.php wala function use karein)
-// Note: API call me hum naam update nahi kar rahe, bas ID se user dhund rahe hain
+// Fetch user from DB
 $stmt = $pdo->prepare("SELECT * FROM users WHERE telegram_id = ?");
 $stmt->execute([$tg_id]);
 $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$user) {
-    echo json_encode(['status' => 'error', 'message' => 'User not found. Please restart bot.']);
+    echo json_encode(['success' => false, 'message' => 'User not found in database.']);
     exit;
 }
 
 // 3. Common Data Collection
-$type = cleanInput($_POST['type']); // buy, sell, deposit, withdraw, swap
-$amount = floatval($_POST['amount']);
-$asset = isset($_POST['asset']) ? cleanInput($_POST['asset']) : 'USDT';
-$tx_hash = isset($_POST['tx_hash']) ? cleanInput($_POST['tx_hash']) : '';
-$network = isset($_POST['network']) ? cleanInput($_POST['network']) : '';
+$type = cleanInput($input['type']); // buy, sell, deposit, withdraw, swap
+$amount = floatval($input['amount']);
+$asset = isset($input['asset']) ? cleanInput($input['asset']) : 'USDT'; // Default asset
 
 // Validation
 if ($amount <= 0) {
-    echo json_encode(['status' => 'error', 'message' => 'Invalid Amount']);
+    echo json_encode(['success' => false, 'message' => 'Invalid Amount']);
     exit;
 }
 
 try {
-    $pdo->beginTransaction(); // Transaction Start (Data safety ke liye)
+    $pdo->beginTransaction(); // Start Transaction
 
-    // --- LOGIC BASED ON TYPE ---
-
+    // --- A. DEPOSIT ---
     if ($type === 'deposit') {
-        // --- DEPOSIT ---
-        // Sirf request save karein, Admin verify karega
-        logTransaction($pdo, $user['telegram_id'], 'deposit', $amount, $asset, "Deposit Request: $tx_hash", 'pending');
+        $tx_hash = cleanInput($input['tx_hash']);
         
-        $message = "Deposit Request Submitted! Please wait for approval.";
+        // Log Transaction (Pending)
+        $stmt = $pdo->prepare("INSERT INTO transactions (user_id, type, asset_symbol, amount, tx_hash, status) VALUES (?, 'deposit', ?, ?, ?, 'pending')");
+        $stmt->execute([$tg_id, $asset, $amount, $tx_hash]);
+        
+        $message = "Deposit Request Submitted! Admin will verify.";
+    } 
 
-    } elseif ($type === 'withdraw') {
-        // --- WITHDRAW ---
-        $wallet_address = cleanInput($_POST['wd_address'] ?? ''); // From Wallet Modal
+    // --- B. WITHDRAW ---
+    elseif ($type === 'withdraw') {
+        $wallet_address = cleanInput($input['address']); // From Wallet Modal
 
         // 1. Balance Check
-        $current_bal = getUserBalance($pdo, $user['telegram_id'], $asset);
+        $current_bal = getUserBalance($pdo, $tg_id, $asset);
         if ($current_bal < $amount) {
-            throw new Exception("Insufficient Balance for Withdrawal!");
+            throw new Exception("Insufficient Balance!");
         }
 
         // 2. Deduct Balance Immediately (Lock Funds)
-        if (!updateBalance($pdo, $user['telegram_id'], $asset, $amount, 'debit')) {
-            throw new Exception("Balance update failed.");
-        }
+        updateBalance($pdo, $tg_id, $asset, $amount, 'debit');
 
         // 3. Save to DB
-        $sql = "INSERT INTO transactions (user_id, type, asset_symbol, amount, status, wallet_address, created_at) VALUES (?, 'withdraw', ?, ?, 'pending', ?, NOW())";
+        $desc = "Withdraw request to $wallet_address";
+        $sql = "INSERT INTO transactions (user_id, type, asset_symbol, amount, status, wallet_address, description, created_at) VALUES (?, 'withdraw', ?, ?, 'pending', ?, ?, NOW())";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute([$user['telegram_id'], $asset, $amount, $wallet_address]);
+        $stmt->execute([$tg_id, $asset, $amount, $wallet_address, $desc]);
 
-        $message = "Withdrawal Requested! Amount deducted temporarily.";
+        $message = "Withdrawal Requested! Funds deducted temporarily.";
+    } 
+    
+    // --- C. SWAP (Updated Logic) ---
+    elseif ($type === 'swap') {
+        $from_coin = cleanInput($input['from_coin']);
+        $to_coin = cleanInput($input['to_coin']);
+        $get_amt = floatval($input['receive_amount']); // Frontend se aaya hua estimated amount
+        
+        // 1. Check Source Balance
+        $current_bal = getUserBalance($pdo, $tg_id, $from_coin);
+        if ($current_bal < $amount) {
+            throw new Exception("Insufficient $from_coin Balance!");
+        }
 
-    } elseif ($type === 'buy') {
-        // --- BUY ---
-        // User wants to buy USDT, save receiver wallet & UTR
-        $receiver_wallet = cleanInput($_POST['receiver_wallet'] ?? '');
+        // 2. Execute Swap (Debit Old, Credit New)
+        updateBalance($pdo, $tg_id, $from_coin, $amount, 'debit');
+        updateBalance($pdo, $tg_id, $to_coin, $get_amt, 'credit');
+
+        // 3. Log Transaction
+        $desc = "Swapped $amount $from_coin to $get_amt $to_coin";
+        // Hum 'from_coin' ko asset_symbol maante hain main record ke liye
+        $sql = "INSERT INTO transactions (user_id, type, asset_symbol, amount, status, description, created_at) VALUES (?, 'swap', ?, ?, 'completed', ?, NOW())";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$tg_id, $from_coin, $amount, $desc]);
+
+        $message = "Swap Successful!";
+    }
+
+    // --- D. BUY (Legacy support for index.php) ---
+    elseif ($type === 'buy') {
+        $tx_hash = cleanInput($input['tx_hash']);
+        $network = cleanInput($input['network']);
+        $rec_wallet = cleanInput($input['receiver_wallet']);
         
         $sql = "INSERT INTO transactions (user_id, type, asset_symbol, amount, status, tx_hash, wallet_address, network, created_at) VALUES (?, 'buy', ?, ?, 'pending', ?, ?, ?, NOW())";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute([$user['telegram_id'], $asset, $amount, $tx_hash, $receiver_wallet, $network]);
+        $stmt->execute([$tg_id, $asset, $amount, $tx_hash, $rec_wallet, $network]);
 
-        $message = "Buy Order Placed! waiting for Admin confirmation.";
+        $message = "Buy Order Placed!";
+    }
 
-    } elseif ($type === 'sell') {
-        // --- SELL ---
-        // User selling USDT -> INR
-        
+    // --- E. SELL (Legacy support for index.php) ---
+    elseif ($type === 'sell') {
         // 1. Check Balance
-        $current_bal = getUserBalance($pdo, $user['telegram_id'], $asset);
+        $current_bal = getUserBalance($pdo, $tg_id, $asset);
         if ($current_bal < $amount) {
-            throw new Exception("Insufficient USDT Balance!");
+            throw new Exception("Insufficient Balance!");
         }
 
         // 2. Deduct Balance (Escrow)
-        if (!updateBalance($pdo, $user['telegram_id'], $asset, $amount, 'debit')) {
-            throw new Exception("Failed to lock funds.");
-        }
+        updateBalance($pdo, $tg_id, $asset, $amount, 'debit');
 
         // 3. Get Payment Details
-        $payment_method = cleanInput($_POST['payment_method']);
-        $bank_name = null; $acc_num = null; $ifsc = null; $holder = null; $upi_id = null;
-
-        if ($payment_method === 'BANK') {
-            $bank_name = cleanInput($_POST['bank_name']);
-            $acc_num = cleanInput($_POST['account_number']);
-            $ifsc = cleanInput($_POST['ifsc_code']);
-            $holder = cleanInput($_POST['account_holder']);
-        } else {
-            $upi_id = cleanInput($_POST['upi_id']);
-        }
+        $pay_method = cleanInput($input['payment_method']);
+        $upi = $input['upi_id'] ?? null;
+        $bank = $input['bank_name'] ?? null;
+        $acc = $input['account_number'] ?? null;
+        $ifsc = $input['ifsc_code'] ?? null;
+        $holder = $input['account_holder'] ?? null;
+        $tx_hash = $input['tx_hash'] ?? ''; // Sell me UTR zaruri nahi, par agar user de raha hai to le lo
 
         // 4. Save to DB
         $sql = "INSERT INTO transactions (user_id, type, asset_symbol, amount, status, tx_hash, payment_method, bank_name, account_number, ifsc_code, account_holder, upi_id, created_at) 
                 VALUES (?, 'sell', ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, NOW())";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute([$user['telegram_id'], $asset, $amount, $tx_hash, $payment_method, $bank_name, $acc_num, $ifsc, $holder, $upi_id]);
+        $stmt->execute([$tg_id, $asset, $amount, $tx_hash, $pay_method, $bank, $acc, $ifsc, $holder, $upi]);
 
-        $message = "Sell Order Placed! Funds locked. Admin will send INR.";
+        $message = "Sell Order Placed! Funds locked.";
+    }
 
-    } elseif ($type === 'swap') {
-        // --- SWAP (Real-time) ---
-        // Example: Swap USDT -> TON
-        $from_asset = $asset;
-        $to_asset = cleanInput($_POST['to_asset']);
-        
-        // 1. Check Source Balance
-        $current_bal = getUserBalance($pdo, $user['telegram_id'], $from_asset);
-        if ($current_bal < $amount) {
-            throw new Exception("Insufficient $from_asset Balance!");
-        }
-
-        // 2. Get Exchange Rate (Dynamic or Mock)
-        // Note: Real project me yahan Live API se rate check karein
-        $rates = [
-            'USDT' => 1,
-            'TON' => 0.15, // Example: 1 TON = $6.6 (Reverse rate approx 0.15 TON per USDT is wrong math but for demo logic)
-            // Correct Logic: 
-            // If USDT -> TON: Amount / Price of TON
-            // If TON -> USDT: Amount * Price of TON
-        ];
-        
-        // Simple Demo Rate Logic (Assume USDT = 1)
-        // Aap baad me isko DB settings se connect kar sakte hain
-        $usd_value = $amount; // Default assumption input is USD value equivalent
-        
-        // Agar input USDT nahi hai, to pehle USD value nikalein (Mock)
-        if($from_asset !== 'USDT') {
-             // Mock: 1 TON = 5 USDT, 1 BTC = 90000 USDT
-             if($from_asset == 'TON') $usd_value = $amount * 5.0; 
-             if($from_asset == 'BTC') $usd_value = $amount * 90000.0;
-        }
-
-        // Ab Output amount nikalein
-        $receive_amount = $usd_value; // Default
-        if($to_asset == 'TON') $receive_amount = $usd_value / 5.0; // Price of TON
-        if($to_asset == 'BTC') $receive_amount = $usd_value / 90000.0;
-        if($to_asset == 'USDT') $receive_amount = $usd_value;
-
-        // 3. Execute Swap (Debit Old, Credit New)
-        if (!updateBalance($pdo, $user['telegram_id'], $from_asset, $amount, 'debit')) {
-            throw new Exception("Swap Debit Failed");
-        }
-        updateBalance($pdo, $user['telegram_id'], $to_asset, $receive_amount, 'credit');
-
-        // 4. Log Transaction
-        $desc = "Swapped $amount $from_asset to " . number_format($receive_amount, 6) . " $to_asset";
-        $sql = "INSERT INTO transactions (user_id, type, asset_symbol, amount, status, description, created_at) VALUES (?, 'swap', ?, ?, 'completed', ?, NOW())";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$user['telegram_id'], $from_asset, $amount, $desc]);
-
-        $message = "Swap Successful! Received " . number_format($receive_amount, 4) . " $to_asset";
-
-    } else {
+    else {
         throw new Exception("Invalid Transaction Type");
     }
 
-    $pdo->commit(); // Save changes permanently
-    echo json_encode(['status' => 'success', 'message' => $message]);
+    $pdo->commit(); // Save Everything
+    echo json_encode(['success' => true, 'message' => $message]);
 
 } catch (Exception $e) {
-    $pdo->rollBack(); // Agar error aaye to sab purana jaisa kar do
-    echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+    $pdo->rollBack(); // Undo changes on error
+    echo json_encode(['success' => false, 'message' => $e->getMessage()]);
 }
 ?>
