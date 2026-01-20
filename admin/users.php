@@ -1,7 +1,7 @@
 <?php
 /*
 File: admin/users.php
-Purpose: Advanced User Manager with Dynamic Balance Modal & UI Fixes
+Purpose: Advanced User Manager with Dynamic Balance Modal, Invite Count & UI Fixes
 */
 session_start();
 require_once '../includes/functions.php'; 
@@ -161,7 +161,7 @@ $supported_assets = ['USDT', 'TON', 'BTC', 'BNB', 'TRX'];
                         <th>ID</th>
                         <th>User Profile</th>
                         <th>Total Fund</th>
-                        <th>Status</th>
+                        <th>Invite</th> <th>Status</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -173,16 +173,20 @@ $supported_assets = ['USDT', 'TON', 'BTC', 'BNB', 'TRX'];
                             $full_name = htmlspecialchars($u['first_name'] . ' ' . $u['last_name']);
                             
                             // Fetch USDT Balance for "Total Fund" Display
-                            $main_bal = getUserBalance($pdo, $u['telegram_id'], 'USDT');
+                            // Format: Standard number_format without extra padding
+                            $main_bal_raw = getUserBalance($pdo, $u['telegram_id'], 'USDT');
+                            $main_bal = number_format((float)$main_bal_raw, 2, '.', ''); 
+
+                            // --- COUNT REFERRALS ---
+                            $stmt_ref = $pdo->prepare("SELECT COUNT(*) FROM users WHERE referred_by = ?");
+                            $stmt_ref->execute([$u['telegram_id']]);
+                            $invite_count = $stmt_ref->fetchColumn();
 
                             // --- DYNAMIC BALANCES FETCHING FOR MODAL ---
-                            // Hum database se user ke sabhi coins ka balance nikalenge
-                            // taaki Modal me dikha sakein.
                             $stmt_w = $pdo->prepare("SELECT asset_symbol, balance FROM user_wallets WHERE user_id = ?");
                             $stmt_w->execute([$u['telegram_id']]);
                             $wallet_rows = $stmt_w->fetchAll(PDO::FETCH_ASSOC);
                             
-                            // Array ko JSON banayenge JS ke liye
                             $user_balances = [];
                             foreach($wallet_rows as $row) {
                                 $user_balances[$row['asset_symbol']] = $row['balance'];
@@ -212,6 +216,10 @@ $supported_assets = ['USDT', 'TON', 'BTC', 'BNB', 'TRX'];
 
                             <td style="color: gold; font-family: monospace; font-size: 14px;">
                                 $<?php echo $main_bal; ?>
+                            </td>
+
+                            <td style="color: #007bff; font-weight: bold; font-size: 14px;">
+                                <?php echo $invite_count; ?>
                             </td>
 
                             <td>
