@@ -1,7 +1,7 @@
 <?php
 /*
 File: invite.php
-Purpose: Referral System (Photo First, Initials Fallback)
+Purpose: Referral System (Re-ordered Layout: Invite Card Top, Stats Bottom)
 */
 require_once 'includes/functions.php';
 $settings = getSettings($pdo);
@@ -32,8 +32,7 @@ $stmt->execute([$user['telegram_id']]);
 $total_earned = $stmt->fetchColumn();
 if(!$total_earned) $total_earned = 0.00;
 
-// 5. Fetch Referral List (Including Photo URL)
-// Hum First Name, Last Name aur Photo URL teeno manga rahe hain
+// 5. Fetch Referral List
 $stmt = $pdo->prepare("
     SELECT first_name, last_name, photo_url, created_at, telegram_id
     FROM users 
@@ -62,6 +61,7 @@ $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
             display: flex;
             gap: 15px;
             margin-bottom: 20px;
+            margin-top: 20px; /* Added margin top since it's now below invite card */
         }
         .stat-card {
             flex: 1;
@@ -97,13 +97,13 @@ $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
             border: 1px solid #444;
         }
         
-        /* Fallback Initials Circle (AK style) */
+        /* Fallback Initials Circle */
         .ref-avatar-initials {
             width: 45px;
             height: 45px;
             border-radius: 50%;
             margin-right: 15px;
-            background: #0ecb81; /* Greenish background like screenshot */
+            background: #0ecb81; 
             color: white;
             display: flex;
             align-items: center;
@@ -144,19 +144,6 @@ $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     <div class="container" style="margin-top: 20px; margin-bottom: 80px;">
 
-        <div class="stats-container">
-            <div class="stat-card">
-                <div class="stat-label">Total Referrals</div>
-                <div class="stat-value gold"><?php echo $total_refs; ?></div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Total Reward</div>
-                <div class="stat-value">
-                    <?php echo number_format($total_earned, 2); ?> USDT
-                </div>
-            </div>
-        </div>
-
         <div class="card" style="text-align: center; border: 1px solid gold; background: linear-gradient(135deg, #222 0%, #111 100%);">
             <i class="fa-solid fa-gift" style="font-size: 40px; color: gold; margin-bottom: 10px;"></i>
             
@@ -179,22 +166,33 @@ $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </button>
         </div>
 
+        <div class="stats-container">
+            <div class="stat-card">
+                <div class="stat-label">Total Referrals</div>
+                <div class="stat-value gold"><?php echo $total_refs; ?></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Reward</div>
+                <div class="stat-value">
+                    <?php echo number_format($total_earned, 2); ?> USDT
+                </div>
+            </div>
+        </div>
+
         <h3 style="margin: 20px 0 10px 0; color: gold;">Referrals List</h3>
 
         <div id="referralList">
             <?php if(count($my_referrals) > 0): ?>
                 <?php foreach($my_referrals as $ref): 
-                    // 1. Data Setup
+                    // Data Setup
                     $full_name = htmlspecialchars($ref['first_name'] . ' ' . $ref['last_name']);
                     $join_date = date('d/m/Y', strtotime($ref['created_at']));
-                    $display_amount = "0.00"; // Default pending
+                    $display_amount = "0.00"; 
                     
-                    // 2. Avatar Logic (Photo vs Initials)
-                    $photo_url = $ref['photo_url']; // DB se photo URL
-                    $show_image = !empty($photo_url); // Check agar photo hai
+                    // Avatar Logic
+                    $photo_url = $ref['photo_url']; 
+                    $show_image = !empty($photo_url); 
                     
-                    // Initials Banayein (Fallback ke liye)
-                    // Agar naam "Akash Kumar" hai to "AK", agar sirf "Akash" hai to "A"
                     $initials = strtoupper(substr($ref['first_name'], 0, 1));
                     if(!empty($ref['last_name'])) {
                         $initials .= strtoupper(substr($ref['last_name'], 0, 1));
@@ -208,7 +206,6 @@ $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <?php else: ?>
                         <div class="ref-avatar-initials"><?php echo $initials; ?></div>
                     <?php endif; ?>
-                    
                     
                     <div class="ref-info">
                         <div class="ref-name"><?php echo $full_name; ?></div>
