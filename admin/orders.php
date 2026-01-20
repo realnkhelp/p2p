@@ -1,12 +1,12 @@
 <?php
 /*
 File: admin/orders.php
-Purpose: Approve/Reject Transactions & Manage Referrals (With Copy Feature)
+Purpose: Master Settings (Dynamic Assets, Rates, Limits & Maintenance)
 */
 session_start();
-require_once '../includes/functions.php';
+require_once '../includes/db_connect.php';
 
-// 1. Check Login
+// 1. Security Check
 if (!isset($_SESSION['admin_logged_in'])) {
     header("Location: index.php");
     exit;
@@ -14,73 +14,95 @@ if (!isset($_SESSION['admin_logged_in'])) {
 
 $msg = "";
 
-// --- ACTION HANDLE (Approve/Reject) ---
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $action = cleanInput($_POST['action']);
-    $tx_id = intval($_POST['tx_id']);
+// --- A. HANDLE GLOBAL SETTINGS UPDATE ---
+if (isset($_POST['btn_update_settings'])) {
+    // General
+    $bonus = $_POST['referral_bonus'];
+    $ref_min_trade = $_POST['referral_min_trade'];
+    $bot_url = $_POST['bot_url'];
+    $support_url = $_POST['support_url'];
+    
+    // Maintenance
+    $m_mode = $_POST['maintenance_mode'];
+    $m_msg = $_POST['maintenance_message'];
+    $m_date = $_POST['maintenance_date'];
+    $m_time = $_POST['maintenance_time'];
 
-    $stmt = $pdo->prepare("SELECT * FROM transactions WHERE id = ?");
-    $stmt->execute([$tx_id]);
-    $tx = $stmt->fetch(PDO::FETCH_ASSOC);
+    // P2P Rates (Direct Amount)
+    $upi = $_POST['admin_upi'];
+    $buy_rate = $_POST['p2p_buy_rate'];   
+    $sell_rate = $_POST['p2p_sell_rate']; 
+    
+    // Limits
+    $min_dep = $_POST['min_deposit'];
+    $min_wd = $_POST['min_withdraw'];
+    $min_swap = $_POST['min_swap'];
 
-    if ($tx && $tx['status'] == 'pending') {
-        
-        // --- APPROVE ---
-        if ($action == 'approve') {
-            if ($tx['type'] == 'buy' || $tx['type'] == 'deposit') {
-                updateBalance($pdo, $tx['user_id'], $tx['asset_symbol'], $tx['amount'], 'credit');
-                checkReferralReward($pdo, $tx['user_id'], $tx['amount']);
-            }
-            $upd = $pdo->prepare("UPDATE transactions SET status = 'approved' WHERE id = ?");
-            if ($upd->execute([$tx_id])) {
-                $msg = "<div class='alert success'>Order #$tx_id Approved Successfully!</div>";
-            }
-        } 
-        
-        // --- REJECT ---
-        elseif ($action == 'reject') {
-            $reason = cleanInput($_POST['reason']);
-            if ($tx['type'] == 'sell' || $tx['type'] == 'withdraw' || $tx['type'] == 'swap') {
-                updateBalance($pdo, $tx['user_id'], $tx['asset_symbol'], $tx['amount'], 'credit'); // Refund
-            }
-            $upd = $pdo->prepare("UPDATE transactions SET status = 'rejected', reject_reason = ? WHERE id = ?");
-            $upd->execute([$reason, $tx_id]);
-            $msg = "<div class='alert error'>Order #$tx_id Rejected & Refunded!</div>";
-        }
+    $sql = "UPDATE settings SET 
+            referral_bonus_amount=?, referral_min_trade=?, bot_url=?, support_url=?,
+            maintenance_mode=?, maintenance_message=?, maintenance_end_date=?, maintenance_end_time=?,
+            admin_upi=?, p2p_buy_rate=?, p2p_sell_rate=?,
+            min_deposit_limit=?, min_withdraw_limit=?, min_swap_limit=? 
+            WHERE id=1";
+            
+    $stmt = $pdo->prepare($sql);
+    
+    if ($stmt->execute([
+        $bonus, $ref_min_trade, $bot_url, $support_url, 
+        $m_mode, $m_msg, $m_date, $m_time,
+        $upi, $buy_rate, $sell_rate, 
+        $min_dep, $min_wd, $min_swap
+    ])) {
+        $msg = "<div class='alert success'>✅ Global Settings Updated!</div>";
+    } else {
+        $msg = "<div class='alert error'>❌ Error Updating Settings.</div>";
     }
 }
 
-// --- REFERRAL LOGIC ---
-function checkReferralReward($pdo, $user_tg_id, $deposit_amount) {
-    $settings = getSettings($pdo);
-    $min_trade = $settings['referral_min_trade'];
-    $bonus_amt = $settings['referral_bonus_amount'];
+// --- B. HANDLE ASSETS (ADD / EDIT / DELETE / TOGGLE) ---
 
-    if ($deposit_amount >= $min_trade) {
-        $u = $pdo->prepare("SELECT referred_by FROM users WHERE telegram_id = ?");
-        $u->execute([$user_tg_id]);
-        $referrer_id = $u->fetchColumn();
-
-        if ($referrer_id) {
-            $chk = $pdo->prepare("SELECT id FROM transactions WHERE user_id = ? AND type = 'referral_bonus' AND description LIKE ?");
-            $chk->execute([$referrer_id, "%$user_tg_id%"]);
-            if (!$chk->fetch()) {
-                updateBalance($pdo, $referrer_id, 'USDT', $bonus_amt, 'credit');
-                $desc = "Referral Bonus for User: $user_tg_id";
-                logTransaction($pdo, $referrer_id, 'referral_bonus', $bonus_amt, 'USDT', $desc, 'completed');
-            }
-        }
+// 1. Add New Asset
+if (isset($_POST['btn_add_asset'])) {
+    $net = cleanInput($_POST['network_name']);
+    $addr = cleanInput($_POST['wallet_address']);
+    
+    if(!empty($net) && !empty($addr)){
+        $pdo->prepare("INSERT INTO admin_wallets (network_name, wallet_address) VALUES (?, ?)")->execute([$net, $addr]);
+        $msg = "<div class='alert success'>New Asset Added Successfully!</div>";
     }
 }
 
-// --- FETCH ORDERS ---
-$filter = isset($_GET['view']) ? cleanInput($_GET['view']) : 'pending';
-$sql = "SELECT * FROM transactions ";
-if ($filter == 'pending') {
-    $sql .= "WHERE status = 'pending' ";
+// 2. Edit Asset
+if (isset($_POST['btn_edit_asset'])) {
+    $id = intval($_POST['edit_id']);
+    $net = cleanInput($_POST['edit_network']);
+    $addr = cleanInput($_POST['edit_address']);
+    
+    $pdo->prepare("UPDATE admin_wallets SET network_name=?, wallet_address=? WHERE id=?")->execute([$net, $addr, $id]);
+    $msg = "<div class='alert success'>Asset Updated Successfully!</div>";
 }
-$sql .= "ORDER BY id DESC";
-$orders = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
+
+// 3. Delete Asset
+if (isset($_GET['del_asset'])) {
+    $id = intval($_GET['del_asset']);
+    $pdo->prepare("DELETE FROM admin_wallets WHERE id=?")->execute([$id]);
+    header("Location: referral.php"); exit;
+}
+
+// 4. Toggle Status (Active/Disable)
+if (isset($_GET['toggle_asset'])) {
+    $id = intval($_GET['toggle_asset']);
+    $curr = intval($_GET['s']); // Current status
+    $new = $curr ? 0 : 1; // Swap
+    $pdo->prepare("UPDATE admin_wallets SET is_active=? WHERE id=?")->execute([$new, $id]);
+    header("Location: referral.php"); exit;
+}
+
+// Fetch Data
+$settings = $pdo->query("SELECT * FROM settings WHERE id=1")->fetch(PDO::FETCH_ASSOC);
+$assets = $pdo->query("SELECT * FROM admin_wallets ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
+
+function cleanInput($data) { return htmlspecialchars(strip_tags(trim($data))); }
 ?>
 
 <!DOCTYPE html>
@@ -88,203 +110,219 @@ $orders = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Orders</title>
+    <title>Master Settings</title>
     <link rel="stylesheet" href="../assets/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         body { padding-top: 80px; background: #000; color: #ddd; }
         .admin-nav { position: fixed; top: 0; left: 0; width: 100%; height: 60px; background: #111; border-bottom: 1px solid gold; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; z-index: 100; }
         
-        .table-container { overflow-x: auto; background: #1a1a1a; border-radius: 10px; border: 1px solid #333; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #333; font-size: 13px; }
-        th { background: #222; color: gold; text-transform: uppercase; font-size: 11px; }
-        
-        .badge { padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
-        .bg-pending { background: #ffc107; color: #000; }
-        .bg-approved { background: #28a745; color: #fff; }
-        .bg-rejected { background: #ff4d4d; color: #fff; }
-        
-        /* Details Box */
-        .details-box { background: rgba(255,255,255,0.05); padding: 8px; border-radius: 4px; font-size: 11px; margin-top: 5px; color: #ccc; border: 1px solid #333; }
-        
-        /* Copy Icon Style */
-        .copy-icon { cursor: pointer; color: gold; margin-left: 5px; font-size: 12px; transition: 0.2s; }
-        .copy-icon:hover { color: white; transform: scale(1.2); }
-        .data-row { margin-bottom: 4px; display: flex; align-items: center; }
+        .container { max-width: 1200px; margin: auto; padding: 15px; }
+        .grid-layout { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 20px; }
+        @media(max-width: 900px) { .grid-layout { grid-template-columns: 1fr; } }
 
-        .alert { padding: 10px; margin-bottom: 20px; border-radius: 5px; text-align: center; }
-        .alert.success { background: #28a745; color: white; }
-        .alert.error { background: #ff4d4d; color: white; }
+        .card { background: #1a1a1a; padding: 20px; border-radius: 12px; border: 1px solid #333; margin-bottom: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        .section-title { color: gold; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 15px; font-size: 16px; display: flex; align-items: center; gap: 10px; font-weight: bold; }
+        
+        .row { display: flex; gap: 15px; }
+        .col { flex: 1; }
+        
+        input, select { background: #252525; border: 1px solid #444; color: white; padding: 12px; width: 100%; border-radius: 8px; margin-top: 5px; outline: none; transition: 0.3s; }
+        input:focus, select:focus { border-color: gold; }
+        label { font-size: 12px; color: #aaa; font-weight: 500; }
+
+        .alert { padding: 12px; margin-bottom: 20px; border-radius: 8px; text-align: center; font-weight: bold; }
+        .alert.success { background: rgba(40, 167, 69, 0.2); color: #28a745; border: 1px solid #28a745; }
+        .alert.error { background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
+
+        /* Asset List Styling */
+        .asset-item { display: flex; justify-content: space-between; align-items: center; background: #222; padding: 15px; border-radius: 12px; margin-bottom: 10px; border: 1px solid #333; transition: 0.2s; }
+        .asset-item:hover { border-color: #555; }
+        
+        .asset-info h4 { margin: 0; color: #fff; font-size: 14px; }
+        .asset-addr { font-size: 11px; color: #888; font-family: monospace; display: block; margin-top: 5px; word-break: break-all; }
+
+        /* Circular Buttons */
+        .action-group { display: flex; gap: 8px; }
+        .circle-btn {
+            width: 32px; height: 32px;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            border: none; cursor: pointer; color: white;
+            text-decoration: none; font-size: 14px;
+            transition: 0.2s;
+        }
+        .circle-btn:hover { transform: scale(1.1); }
+        .btn-edit { background: #007bff; }
+        .btn-del { background: #dc3545; }
+        .btn-on { background: #28a745; }
+        .btn-off { background: #6c757d; }
+
+        .m-active { border: 1px solid #ff4d4d !important; background: rgba(255, 77, 77, 0.1) !important; }
+
+        /* Modal */
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 2000; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
     </style>
 </head>
 <body>
 
     <div class="admin-nav">
         <a href="dashboard.php" style="color: gold; text-decoration: none;"><i class="fa-solid fa-arrow-left"></i> Back</a>
-        <h3 style="color: white;">Orders Manager</h3>
-        <div style="width: 50px;"></div>
+        <h3 style="color: white;">Master Settings</h3>
+        <div></div>
     </div>
 
     <div class="container">
-        
         <?php echo $msg; ?>
 
-        <div style="margin-bottom: 15px; display: flex; gap: 10px;">
-            <a href="?view=pending" class="btn" style="width: auto; background: <?php echo $filter=='pending'?'gold':'#333'; ?>; color: <?php echo $filter=='pending'?'#000':'#fff'; ?>;">Pending</a>
-            <a href="?view=all" class="btn" style="width: auto; background: <?php echo $filter=='all'?'gold':'#333'; ?>; color: <?php echo $filter=='all'?'#000':'#fff'; ?>;">History</a>
-        </div>
+        <div class="grid-layout">
+            
+            <div>
+                <form method="POST">
+                    
+                    <div class="card">
+                        <div class="section-title"><i class="fa-solid fa-money-bill-transfer"></i> P2P Rates (Direct Price)</div>
+                        <div class="form-group" style="margin-bottom: 15px;">
+                            <label>Admin UPI ID (Recv Payment)</label>
+                            <input type="text" name="admin_upi" value="<?php echo htmlspecialchars($settings['admin_upi']); ?>" required>
+                        </div>
+                        <div class="row">
+                            <div class="col">
+                                <label style="color: #28a745;">Buy Price (INR)</label>
+                                <input type="number" step="0.01" name="p2p_buy_rate" value="<?php echo htmlspecialchars($settings['p2p_buy_rate']); ?>" required>
+                            </div>
+                            <div class="col">
+                                <label style="color: #ff4d4d;">Sell Price (INR)</label>
+                                <input type="number" step="0.01" name="p2p_sell_rate" value="<?php echo htmlspecialchars($settings['p2p_sell_rate']); ?>" required>
+                            </div>
+                        </div>
+                    </div>
 
-        <div class="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID / User</th>
-                        <th>Type / Asset</th>
-                        <th>Amount</th>
-                        <th>Copy Details</th>
-                        <th>Status</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if(count($orders) > 0): ?>
-                        <?php foreach($orders as $row): ?>
-                        <tr>
-                            <td>
-                                <b>#<?php echo $row['id']; ?></b><br>
-                                <span style="font-size: 10px; color: #888;">UID: <?php echo $row['user_id']; ?></span>
-                            </td>
-                            
-                            <td>
-                                <span style="text-transform: uppercase; font-weight: bold; 
-                                    color: <?php echo ($row['type']=='buy' || $row['type']=='deposit') ? '#28a745' : '#ff4d4d'; ?>">
-                                    <?php echo $row['type']; ?>
-                                </span>
-                                <br>
-                                <span style="font-size: 10px; color: gold;"><?php echo $row['asset_symbol']; ?></span>
-                            </td>
+                    <div class="card">
+                        <div class="section-title"><i class="fa-solid fa-sliders"></i> Global Limits</div>
+                        <div class="row">
+                            <div class="col"><label>Min Deposit</label><input type="number" step="0.1" name="min_deposit" value="<?php echo htmlspecialchars($settings['min_deposit_limit']); ?>"></div>
+                            <div class="col"><label>Min Withdraw</label><input type="number" step="0.1" name="min_withdraw" value="<?php echo htmlspecialchars($settings['min_withdraw_limit']); ?>"></div>
+                            <div class="col"><label>Min Swap</label><input type="number" step="0.1" name="min_swap" value="<?php echo htmlspecialchars($settings['min_swap_limit']); ?>"></div>
+                        </div>
+                    </div>
 
-                            <td style="font-weight: bold; font-family: monospace;">
-                                <?php echo number_format($row['amount'], 4); ?>
-                            </td>
+                    <div class="card <?php echo $settings['maintenance_mode'] ? 'm-active' : ''; ?>">
+                        <div class="section-title"><i class="fa-solid fa-screwdriver-wrench"></i> Maintenance Mode</div>
+                        <div class="row">
+                            <div class="col" style="flex: 0 0 100px;">
+                                <label>Mode</label>
+                                <select name="maintenance_mode" style="border-color: <?php echo $settings['maintenance_mode'] ? '#ff4d4d' : '#444'; ?>;">
+                                    <option value="0" <?php echo $settings['maintenance_mode']==0?'selected':''; ?>>OFF</option>
+                                    <option value="1" <?php echo $settings['maintenance_mode']==1?'selected':''; ?>>ON</option>
+                                </select>
+                            </div>
+                            <div class="col"><label>Message (Wait Text)</label><input type="text" name="maintenance_message" value="<?php echo htmlspecialchars($settings['maintenance_message']); ?>"></div>
+                        </div>
+                        <div class="row" style="margin-top: 10px;">
+                            <div class="col"><label>End Date</label><input type="date" name="maintenance_date" value="<?php echo htmlspecialchars($settings['maintenance_end_date']); ?>"></div>
+                            <div class="col"><label>End Time</label><input type="time" name="maintenance_time" value="<?php echo htmlspecialchars($settings['maintenance_end_time']); ?>"></div>
+                        </div>
+                    </div>
 
-                            <td>
-                                <?php if(($row['type'] == 'buy' || $row['type'] == 'deposit') && $row['tx_hash']): ?>
-                                    <div class="details-box">
-                                        <div class="data-row">
-                                            <span>Hash: <?php echo substr($row['tx_hash'], 0, 10).'...'; ?></span>
-                                            <i class="fa-regular fa-copy copy-icon" onclick="copyData('<?php echo $row['tx_hash']; ?>')"></i>
-                                        </div>
-                                        <div class="data-row">Network: <?php echo $row['network']; ?></div>
-                                    </div>
-                                <?php endif; ?>
+                    <div class="card">
+                        <div class="section-title"><i class="fa-solid fa-users"></i> Referral System</div>
+                        <div class="row">
+                            <div class="col"><label>Bonus (USDT)</label><input type="text" name="referral_bonus" value="<?php echo htmlspecialchars($settings['referral_bonus_amount']); ?>"></div>
+                            <div class="col"><label>Min Trade ($)</label><input type="text" name="referral_min_trade" value="<?php echo htmlspecialchars($settings['referral_min_trade']); ?>"></div>
+                        </div>
+                        <div style="margin-top: 10px;"><label>Bot Link</label><input type="text" name="bot_url" value="<?php echo htmlspecialchars($settings['bot_url']); ?>"></div>
+                        <div style="margin-top: 10px;"><label>Support Link</label><input type="text" name="support_url" value="<?php echo htmlspecialchars($settings['support_url']); ?>"></div>
+                    </div>
 
-                                <?php if($row['type'] == 'withdraw'): ?>
-                                    <div class="details-box">
-                                        <div class="data-row">
-                                            <span>Addr: <?php echo substr($row['wallet_address'], 0, 10).'...'; ?></span>
-                                            <i class="fa-regular fa-copy copy-icon" onclick="copyData('<?php echo $row['wallet_address']; ?>')"></i>
-                                        </div>
-                                    </div>
-                                <?php endif; ?>
+                    <button type="submit" name="btn_update_settings" class="btn btn-primary" style="width: 100%; padding: 15px; font-size: 16px; margin-bottom: 30px;">
+                        <i class="fa-solid fa-save"></i> Update Settings
+                    </button>
+                </form>
+            </div>
 
-                                <?php if($row['type'] == 'sell'): ?>
-                                    <div class="details-box">
-                                        <?php if($row['payment_method'] == 'UPI'): ?>
-                                            <div class="data-row">
-                                                <span>UPI: <?php echo $row['upi_id']; ?></span>
-                                                <i class="fa-regular fa-copy copy-icon" onclick="copyData('<?php echo $row['upi_id']; ?>')"></i>
-                                            </div>
-                                        <?php else: ?>
-                                            <div class="data-row" style="color:#aaa;">Bank Transfer</div>
-                                            <div class="data-row">
-                                                <span>Acc: <?php echo $row['account_number']; ?></span>
-                                                <i class="fa-regular fa-copy copy-icon" onclick="copyData('<?php echo $row['account_number']; ?>')"></i>
-                                            </div>
-                                            <div class="data-row">
-                                                <span>IFSC: <?php echo $row['ifsc_code']; ?></span>
-                                                <i class="fa-regular fa-copy copy-icon" onclick="copyData('<?php echo $row['ifsc_code']; ?>')"></i>
-                                            </div>
-                                            <div style="font-size:10px; color:#888; margin-top:2px;">
-                                                Name: <?php echo $row['account_holder']; ?><br>
-                                                Bank: <?php echo $row['bank_name']; ?>
-                                            </div>
-                                        <?php endif; ?>
-                                    </div>
-                                <?php endif; ?>
-                            </td>
+            <div>
+                <div class="card">
+                    <div class="section-title">
+                        <i class="fa-solid fa-wallet"></i> Manage Assets (Deposit & Withdraw)
+                    </div>
+                    
+                    <form method="POST" style="background: #222; padding: 15px; border-radius: 8px; border: 1px dashed #444; margin-bottom: 20px;">
+                        <label style="color: gold;">Add New Asset</label>
+                        <input type="text" name="network_name" placeholder="Name (e.g. USDT BEP20, TON)" required>
+                        <input type="text" name="wallet_address" placeholder="Admin Address (For Deposit)" required>
+                        
+                        <button type="submit" name="btn_add_asset" class="btn" style="background: gold; color: black; margin-top: 10px; width: 100%; padding: 10px; font-weight: bold;">
+                            <i class="fa-solid fa-plus"></i> Add Asset
+                        </button>
+                    </form>
 
-                            <td>
-                                <span class="badge bg-<?php echo $row['status']; ?>">
-                                    <?php echo strtoupper($row['status']); ?>
-                                </span>
-                            </td>
+                    <div style="max-height: 600px; overflow-y: auto;">
+                        <?php if(count($assets) > 0): ?>
+                            <?php foreach($assets as $a): ?>
+                            <div class="asset-item" style="opacity: <?php echo $a['is_active'] ? '1' : '0.5'; ?>">
+                                <div class="asset-info">
+                                    <h4><?php echo htmlspecialchars($a['network_name']); ?></h4>
+                                    <span class="asset-addr"><?php echo htmlspecialchars($a['wallet_address']); ?></span>
+                                </div>
+                                
+                                <div class="action-group">
+                                    <a href="?toggle_asset=<?php echo $a['id']; ?>&s=<?php echo $a['is_active']; ?>" 
+                                       class="circle-btn <?php echo $a['is_active'] ? 'btn-on' : 'btn-off'; ?>" 
+                                       title="<?php echo $a['is_active'] ? 'Disable' : 'Enable'; ?>">
+                                       <i class="fa-solid fa-power-off"></i>
+                                    </a>
+                                    
+                                    <button onclick="openEditModal(<?php echo $a['id']; ?>, '<?php echo $a['network_name']; ?>', '<?php echo $a['wallet_address']; ?>')" class="circle-btn btn-edit" title="Edit">
+                                        <i class="fa-solid fa-pen"></i>
+                                    </button>
+                                    
+                                    <a href="?del_asset=<?php echo $a['id']; ?>" class="circle-btn btn-del" onclick="return confirm('Delete this asset?');" title="Delete">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </a>
+                                </div>
+                            </div>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <div style="text-align: center; color: #666; padding: 20px;">No assets added yet.</div>
+                        <?php endif; ?>
+                    </div>
+                </div>
 
-                            <td>
-                                <?php if($row['status'] == 'pending'): ?>
-                                    <div style="display: flex; gap: 5px;">
-                                        <form method="POST" onsubmit="return confirm('Approve this order?');">
-                                            <input type="hidden" name="action" value="approve">
-                                            <input type="hidden" name="tx_id" value="<?php echo $row['id']; ?>">
-                                            <button type="submit" class="btn" style="padding: 5px 10px; width: auto; background: #28a745; color: white;" title="Approve">
-                                                <i class="fa-solid fa-check"></i>
-                                            </button>
-                                        </form>
+                <div class="alert" style="background: rgba(0, 123, 255, 0.1); border: 1px solid #007bff; color: #4dabf7; text-align: left; font-size: 11px; font-weight: normal;">
+                    <i class="fa-solid fa-circle-info"></i> <b>Note:</b> These assets will appear in both <b>Deposit</b> and <b>Withdraw</b> dropdowns.
+                </div>
+            </div>
 
-                                        <button class="btn" onclick="openRejectModal(<?php echo $row['id']; ?>)" style="padding: 5px 10px; width: auto; background: #ff4d4d; color: white;" title="Reject">
-                                            <i class="fa-solid fa-xmark"></i>
-                                        </button>
-                                    </div>
-                                <?php else: ?>
-                                    <span style="color: #666;">-</span>
-                                <?php endif; ?>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <tr><td colspan="6" style="text-align: center; padding: 20px;">No Orders Found</td></tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
         </div>
     </div>
 
-    <div id="rejectModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:2000; align-items:center; justify-content:center;">
-        <div class="card" style="width: 300px; padding: 20px; border: 1px solid red; background: #222; border-radius: 10px;">
-            <h3 style="color: #ff4d4d; margin-bottom: 15px;">Reject Order</h3>
+    <div id="editModal" class="modal">
+        <div class="card" style="width: 350px; text-align: center; border: 1px solid gold;">
+            <h3 style="color: gold; margin-bottom: 15px;">Edit Asset</h3>
             <form method="POST">
-                <input type="hidden" name="action" value="reject">
-                <input type="hidden" name="tx_id" id="rejectTxId">
+                <input type="hidden" name="edit_id" id="edit_id">
                 
-                <div class="form-group">
-                    <label style="color: #ccc;">Reason for Rejection</label>
-                    <input type="text" name="reason" placeholder="e.g. Invalid Hash / Wrong Amount" required 
-                           style="width: 100%; padding: 10px; margin-top: 5px; background: #333; border: 1px solid #555; color: white; border-radius: 5px;">
-                </div>
+                <label style="text-align: left; display: block;">Network Name</label>
+                <input type="text" name="edit_network" id="edit_network" required>
+                
+                <label style="text-align: left; display: block; margin-top: 10px;">Wallet Address</label>
+                <input type="text" name="edit_address" id="edit_address" required>
 
-                <div style="display: flex; gap: 10px; margin-top: 15px;">
-                    <button type="submit" class="btn" style="background: #ff4d4d; color: white;">Reject & Refund</button>
-                    <button type="button" class="btn" onclick="document.getElementById('rejectModal').style.display='none'" style="background: #333; color: white;">Cancel</button>
-                </div>
+                <button type="submit" name="btn_edit_asset" class="btn btn-primary" style="margin-top: 15px; width: 100%;">Update Asset</button>
+                <button type="button" class="btn" style="background: #333; margin-top: 10px; width: 100%;" onclick="document.getElementById('editModal').style.display='none'">Cancel</button>
             </form>
         </div>
     </div>
 
     <script>
-        function openRejectModal(id) {
-            document.getElementById('rejectTxId').value = id;
-            document.getElementById('rejectModal').style.display = 'flex';
-        }
-
-        // Copy Function
-        function copyData(text) {
-            navigator.clipboard.writeText(text).then(() => {
-                alert("Copied: " + text);
-            }).catch(err => {
-                console.error('Failed to copy: ', err);
-            });
+        function openEditModal(id, name, addr) {
+            document.getElementById('edit_id').value = id;
+            document.getElementById('edit_network').value = name;
+            document.getElementById('edit_address').value = addr;
+            document.getElementById('editModal').style.display = 'flex';
         }
     </script>
+
 </body>
 </html>
