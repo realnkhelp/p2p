@@ -1,11 +1,12 @@
 <?php
 /*
 File: admin/referral.php
-Purpose: Master Settings (Referral, Wallets, P2P Rates, Limits)
+Purpose: Master Settings (Referral, Wallets, P2P Rates, Limits, Maintenance)
 */
 session_start();
 require_once '../includes/db_connect.php';
 
+// 1. Security Check
 if (!isset($_SESSION['admin_logged_in'])) {
     header("Location: index.php");
     exit;
@@ -21,17 +22,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $bot_url = $_POST['bot_url'];
     $support_url = $_POST['support_url'];
     
-    // 2. P2P & UPI
+    // 2. Maintenance Mode (NEW)
+    $m_mode = $_POST['maintenance_mode']; // 0 or 1
+    $m_msg = $_POST['maintenance_message'];
+    $m_date = $_POST['maintenance_date'];
+    $m_time = $_POST['maintenance_time'];
+
+    // 3. P2P & UPI
     $upi = $_POST['admin_upi'];
     $buy_margin = $_POST['p2p_buy_rate_margin'];
     $sell_margin = $_POST['p2p_sell_rate_margin'];
     
-    // 3. Limits
+    // 4. Limits
     $min_dep = $_POST['min_deposit'];
     $min_wd = $_POST['min_withdraw'];
     $min_swap = $_POST['min_swap'];
 
-    // 4. Admin Wallets (Save as JSON)
+    // 5. Admin Wallets
     $wallets = [
         'USDT_TRC20' => $_POST['w_trc20'],
         'USDT_BEP20' => $_POST['w_bep20'],
@@ -40,9 +47,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     ];
     $wallets_json = json_encode($wallets);
 
-    // Update Query
+    // Update Query (Added Maintenance columns)
     $sql = "UPDATE settings SET 
             referral_bonus_amount=?, referral_min_trade=?, bot_url=?, support_url=?,
+            maintenance_mode=?, maintenance_message=?, maintenance_end_date=?, maintenance_end_time=?,
             admin_upi=?, p2p_buy_rate_margin=?, p2p_sell_rate_margin=?,
             min_deposit_limit=?, min_withdraw_limit=?, min_swap_limit=?,
             admin_wallets_json=? 
@@ -50,7 +58,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             
     $stmt = $pdo->prepare($sql);
     
-    if ($stmt->execute([$bonus, $ref_min_trade, $bot_url, $support_url, $upi, $buy_margin, $sell_margin, $min_dep, $min_wd, $min_swap, $wallets_json])) {
+    if ($stmt->execute([
+        $bonus, $ref_min_trade, $bot_url, $support_url, 
+        $m_mode, $m_msg, $m_date, $m_time,
+        $upi, $buy_margin, $sell_margin, 
+        $min_dep, $min_wd, $min_swap, $wallets_json
+    ])) {
         $msg = "✅ All Settings Updated Successfully!";
     } else {
         $msg = "❌ Error Updating Settings.";
@@ -77,12 +90,15 @@ $admin_wallets = json_decode($settings['admin_wallets_json'], true);
         .admin-nav { position: fixed; top: 0; left: 0; width: 100%; height: 60px; background: #111; border-bottom: 1px solid gold; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; z-index: 100; }
         
         .form-card { background: #1a1a1a; padding: 25px; border-radius: 10px; border: 1px solid #333; max-width: 800px; margin: 0 auto 50px auto; }
-        .section-title { color: gold; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 15px; margin-top: 25px; font-size: 18px; }
+        .section-title { color: gold; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 15px; margin-top: 25px; font-size: 18px; display: flex; align-items: center; gap: 10px; }
         .row { display: flex; gap: 20px; }
         .col { flex: 1; }
         
-        input { background: #222; border: 1px solid #444; color: white; padding: 10px; width: 100%; border-radius: 5px; margin-top: 5px; }
+        input, select { background: #222; border: 1px solid #444; color: white; padding: 10px; width: 100%; border-radius: 5px; margin-top: 5px; }
         label { font-size: 12px; color: #aaa; }
+        
+        /* Maintenance Highlight */
+        .m-active { border: 1px solid #ff4d4d !important; background: rgba(255, 77, 77, 0.1) !important; }
     </style>
 </head>
 <body>
@@ -104,81 +120,106 @@ $admin_wallets = json_decode($settings['admin_wallets_json'], true);
         <div class="form-card">
             <form method="POST">
                 
-                <div class="section-title" style="margin-top: 0;">Referral & General Links</div>
+                <div class="section-title" style="margin-top: 0;"><i class="fa-solid fa-users"></i> Referral & General Links</div>
                 <div class="row">
                     <div class="col">
                         <label>Referral Bonus (USDT)</label>
-                        <input type="text" name="referral_bonus" value="<?php echo $settings['referral_bonus_amount']; ?>" required>
+                        <input type="text" name="referral_bonus" value="<?php echo htmlspecialchars($settings['referral_bonus_amount']); ?>" required>
                     </div>
                     <div class="col">
                         <label>Min Trade to Unlock Reward ($)</label>
-                        <input type="text" name="referral_min_trade" value="<?php echo $settings['referral_min_trade']; ?>" required>
+                        <input type="text" name="referral_min_trade" value="<?php echo htmlspecialchars($settings['referral_min_trade']); ?>" required>
                     </div>
                 </div>
                 <div class="row" style="margin-top: 10px;">
                     <div class="col">
                         <label>Bot Link (Start URL)</label>
-                        <input type="text" name="bot_url" value="<?php echo $settings['bot_url']; ?>" required>
+                        <input type="text" name="bot_url" value="<?php echo htmlspecialchars($settings['bot_url']); ?>" required>
                     </div>
                     <div class="col">
                         <label>Support Username/URL</label>
-                        <input type="text" name="support_url" value="<?php echo $settings['support_url']; ?>">
+                        <input type="text" name="support_url" value="<?php echo htmlspecialchars($settings['support_url']); ?>">
                     </div>
                 </div>
 
-                <div class="section-title">P2P Rates & Payment</div>
+                <div class="section-title"><i class="fa-solid fa-screwdriver-wrench"></i> Maintenance Mode</div>
+                <div class="row <?php echo $settings['maintenance_mode'] ? 'm-active' : ''; ?>" style="padding: 10px; border-radius: 8px;">
+                    <div class="col" style="flex: 0 0 150px;">
+                        <label>Status</label>
+                        <select name="maintenance_mode" style="border-color: <?php echo $settings['maintenance_mode'] ? '#ff4d4d' : '#444'; ?>;">
+                            <option value="0" <?php echo $settings['maintenance_mode'] == 0 ? 'selected' : ''; ?>>Active (Live)</option>
+                            <option value="1" <?php echo $settings['maintenance_mode'] == 1 ? 'selected' : ''; ?>>Maintenance (OFF)</option>
+                        </select>
+                    </div>
+                    <div class="col">
+                        <label>Message (Wait Text)</label>
+                        <input type="text" name="maintenance_message" value="<?php echo htmlspecialchars($settings['maintenance_message']); ?>" placeholder="We will be back soon...">
+                    </div>
+                </div>
+                <div class="row" style="margin-top: 10px;">
+                    <div class="col">
+                        <label>End Date</label>
+                        <input type="date" name="maintenance_date" value="<?php echo htmlspecialchars($settings['maintenance_end_date']); ?>">
+                    </div>
+                    <div class="col">
+                        <label>End Time</label>
+                        <input type="time" name="maintenance_time" value="<?php echo htmlspecialchars($settings['maintenance_end_time']); ?>">
+                    </div>
+                </div>
+
+                <div class="section-title"><i class="fa-solid fa-money-bill-transfer"></i> P2P Rates & Payment</div>
                 <div class="form-group">
                     <label>Admin UPI ID (Recv Payment)</label>
-                    <input type="text" name="admin_upi" value="<?php echo $settings['admin_upi']; ?>" required>
+                    <input type="text" name="admin_upi" value="<?php echo htmlspecialchars($settings['admin_upi']); ?>" required>
                 </div>
                 <div class="row">
                     <div class="col">
                         <label>Buy Margin (+ INR)</label>
-                        <input type="number" step="0.01" name="p2p_buy_rate_margin" value="<?php echo $settings['p2p_buy_rate_margin']; ?>" required>
+                        <input type="number" step="0.01" name="p2p_buy_rate_margin" value="<?php echo htmlspecialchars($settings['p2p_buy_rate_margin']); ?>" required>
                         <small style="color: #666;">Ex: If 2, Rate = 92 (90+2)</small>
                     </div>
                     <div class="col">
                         <label>Sell Margin (- INR)</label>
-                        <input type="number" step="0.01" name="p2p_sell_rate_margin" value="<?php echo $settings['p2p_sell_rate_margin']; ?>" required>
+                        <input type="number" step="0.01" name="p2p_sell_rate_margin" value="<?php echo htmlspecialchars($settings['p2p_sell_rate_margin']); ?>" required>
                         <small style="color: #666;">Ex: If 2, Rate = 88 (90-2)</small>
                     </div>
                 </div>
 
-                <div class="section-title">Admin Wallet Addresses (To Receive Funds)</div>
+                <div class="section-title"><i class="fa-solid fa-wallet"></i> Admin Wallets (To Receive Funds)</div>
                 <div class="row">
                     <div class="col">
                         <label>USDT (TRC20)</label>
-                        <input type="text" name="w_trc20" value="<?php echo $admin_wallets['USDT_TRC20'] ?? ''; ?>" placeholder="TRC20 Address">
+                        <input type="text" name="w_trc20" value="<?php echo htmlspecialchars($admin_wallets['USDT_TRC20'] ?? ''); ?>" placeholder="TRC20 Address">
                     </div>
                     <div class="col">
                         <label>USDT (BEP20)</label>
-                        <input type="text" name="w_bep20" value="<?php echo $admin_wallets['USDT_BEP20'] ?? ''; ?>" placeholder="BEP20 Address">
+                        <input type="text" name="w_bep20" value="<?php echo htmlspecialchars($admin_wallets['USDT_BEP20'] ?? ''); ?>" placeholder="BEP20 Address">
                     </div>
                 </div>
                 <div class="row" style="margin-top: 10px;">
                     <div class="col">
                         <label>TON Address</label>
-                        <input type="text" name="w_ton" value="<?php echo $admin_wallets['TON'] ?? ''; ?>" placeholder="TON Address">
+                        <input type="text" name="w_ton" value="<?php echo htmlspecialchars($admin_wallets['TON'] ?? ''); ?>" placeholder="TON Address">
                     </div>
                     <div class="col">
                         <label>BTC Address</label>
-                        <input type="text" name="w_btc" value="<?php echo $admin_wallets['BTC'] ?? ''; ?>" placeholder="BTC Address">
+                        <input type="text" name="w_btc" value="<?php echo htmlspecialchars($admin_wallets['BTC'] ?? ''); ?>" placeholder="BTC Address">
                     </div>
                 </div>
 
-                <div class="section-title">Global Limits ($/USDT)</div>
+                <div class="section-title"><i class="fa-solid fa-sliders"></i> Global Limits ($/USDT)</div>
                 <div class="row">
                     <div class="col">
                         <label>Min Deposit</label>
-                        <input type="number" step="0.1" name="min_deposit" value="<?php echo $settings['min_deposit_limit']; ?>" required>
+                        <input type="number" step="0.1" name="min_deposit" value="<?php echo htmlspecialchars($settings['min_deposit_limit']); ?>" required>
                     </div>
                     <div class="col">
                         <label>Min Withdraw</label>
-                        <input type="number" step="0.1" name="min_withdraw" value="<?php echo $settings['min_withdraw_limit']; ?>" required>
+                        <input type="number" step="0.1" name="min_withdraw" value="<?php echo htmlspecialchars($settings['min_withdraw_limit']); ?>" required>
                     </div>
                     <div class="col">
                         <label>Min Swap</label>
-                        <input type="number" step="0.1" name="min_swap" value="<?php echo $settings['min_swap_limit']; ?>" required>
+                        <input type="number" step="0.1" name="min_swap" value="<?php echo htmlspecialchars($settings['min_swap_limit']); ?>" required>
                     </div>
                 </div>
 
