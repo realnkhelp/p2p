@@ -1,7 +1,7 @@
 <?php
 /*
 File: index.php
-Purpose: Home Page - With Auto Telegram Profile Sync & Dynamic Forms
+Purpose: Home Page - With Auto Database Sync & Dynamic Admin Wallets
 */
 
 require_once 'includes/functions.php';
@@ -12,28 +12,32 @@ $settings = getSettings($pdo);
 // 2. Minimum Limit
 $min_limit = isset($settings['min_withdraw_limit']) ? floatval($settings['min_withdraw_limit']) : 10.00;
 
-// 3. Admin Wallet Logic (Defaults)
-$admin_wallet_address = "Update in Admin Panel"; 
-if (!empty($settings['admin_wallets_json'])) {
-    $wData = json_decode($settings['admin_wallets_json'], true);
-    if (is_array($wData) && isset($wData['USDT'])) {
-        $admin_wallet_address = $wData['USDT'];
-    } else {
-        $admin_wallet_address = $settings['admin_wallets_json'];
-    }
+// 3. Admin Wallet Logic (Dynamic Parsing)
+$admin_wallets = [];
+$raw_wallets = $settings['admin_wallets_json'];
+
+// JSON decode karke dekhte hain ki kya data hai
+$decoded = json_decode($raw_wallets, true);
+
+if (is_array($decoded)) {
+    // Agar JSON sahi hai (New Format: {"USDT_TRC20":"Tx..", "USDT_BEP20":"0x.."})
+    $admin_wallets = $decoded;
+} else {
+    // Agar purana format hai (Sirf string)
+    $admin_wallets['USDT (Default)'] = $raw_wallets;
 }
 
-// 4. Initial PHP User Setup (Fallback for Browser Testing)
+// 4. Initial PHP User Setup (Fallback)
 $tg_id = 123456789; 
 $first_name = "Guest";
 $username = "guest_user";
 
-// Agar URL me data aa raha hai to use karein (Optional)
 if (isset($_GET['tg_id'])) {
     $tg_id = cleanInput($_GET['tg_id']);
     $first_name = cleanInput($_GET['first_name'] ?? 'User');
 }
 
+// Note: Asli login ab JavaScript se hoga taaki photo update ho sake
 $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
 ?>
 
@@ -63,25 +67,19 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             border: 1px solid #ff0000;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         }
-        /* Profile Pic Styling */
         .profile-pic {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            object-fit: cover;
-            border: 2px solid gold;
+            width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid gold;
         }
-        /* Spacing helpers */
         .mt-3 { margin-top: 15px; }
         .mb-2 { margin-bottom: 10px; }
         
-        /* Bank/UPI Toggle styling */
         .payment-details-box {
-            background: rgba(255, 255, 255, 0.05);
-            padding: 10px;
-            border-radius: 5px;
-            border: 1px solid #444;
-            margin-top: 5px;
+            background: rgba(255, 255, 255, 0.05); padding: 10px; border-radius: 5px; border: 1px solid #444; margin-top: 5px;
+        }
+        
+        /* Network Selector Box */
+        .network-box {
+            background: #222; padding: 10px; border-radius: 8px; border: 1px dashed #555; margin-bottom: 10px;
         }
     </style>
 </head>
@@ -140,7 +138,7 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
                     <select name="network" required>
                         <option value="TRC20">USDT (TRC20)</option>
                         <option value="BEP20">USDT (BEP20)</option>
-                        <option value="POLYGON">USDT (POLYGON)</option>
+                        <option value="TON">USDT (TON)</option>
                     </select>
                 </div>
 
@@ -167,23 +165,24 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             <form id="sellForm" onsubmit="submitOrder(event, 'sell')">
                 
                 <div class="form-group">
-                    <label>1. Wallet Address (Send USDT Here)</label>
+                    <label>1. Select Network & Send USDT</label>
+                    <select id="sellNetworkSelect" onchange="updateAdminWallet()" class="form-control mb-2">
+                        <?php foreach($admin_wallets as $net => $addr): ?>
+                            <option value="<?php echo $net; ?>" data-addr="<?php echo $addr; ?>">
+                                <?php echo str_replace('_', ' ', $net); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+
                     <div class="invite-link-box" style="display: flex; justify-content: space-between; align-items: center;">
-                        <span id="adminWallet" style="font-size: 12px; word-break: break-all;"><?php echo $admin_wallet_address; ?></span> 
-                        <i class="fa-regular fa-copy" onclick="copyText('adminWallet')" style="cursor: pointer; margin-left:5px;"></i>
+                        <span id="adminWalletDisplay" style="font-size: 12px; word-break: break-all;">Loading...</span> 
+                        <i class="fa-regular fa-copy" onclick="copyText('adminWalletDisplay')" style="cursor: pointer; margin-left:5px;"></i>
                     </div>
+                    <small style="color: #ff4d4d; font-size: 11px;">⚠️ Send only to the address shown above matching the network.</small>
                 </div>
 
                 <div class="form-group">
-                    <label>2. Wallet Network</label>
-                    <div style="background: #333; padding: 10px; border-radius: 5px; color: #fff; font-weight: bold; border: 1px solid #555;">
-                        TRC20 / BEP20 (Check Admin Address)
-                    </div>
-                    <small style="color: #aaa;">Only send USDT on the correct network.</small>
-                </div>
-
-                <div class="form-group">
-                    <label>3. Your Payment Details (To Receive INR)</label>
+                    <label>2. Your Payment Details (To Receive INR)</label>
                     <select name="payment_method" id="sellPaymentMethod" onchange="toggleSellPaymentFields()" required>
                         <option value="UPI">UPI</option>
                         <option value="BANK">Bank Transfer</option>
@@ -198,13 +197,10 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
                         <div id="bankInputSection" style="display: none;">
                             <label style="font-size: 12px;">Bank Name</label>
                             <input type="text" name="bank_name" placeholder="e.g. SBI, HDFC" style="margin-top:5px; margin-bottom:10px;">
-                            
                             <label style="font-size: 12px;">Account Holder Name</label>
                             <input type="text" name="account_holder" placeholder="Name on Passbook" style="margin-bottom:10px;">
-                            
-                            <label style="font-size: 12px;">Bank Account Number</label>
+                            <label style="font-size: 12px;">Account Number</label>
                             <input type="text" name="account_number" placeholder="Account No." style="margin-bottom:10px;">
-                            
                             <label style="font-size: 12px;">IFSC Code</label>
                             <input type="text" name="ifsc_code" placeholder="IFSC Code" style="margin-bottom:5px;">
                         </div>
@@ -212,7 +208,7 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
                 </div>
 
                 <div class="form-group">
-                    <label>4. Amount (USDT)</label>
+                    <label>3. Amount (USDT)</label>
                     <input type="number" id="sellAmount" name="amount" placeholder="Min <?php echo $min_limit; ?> USDT" step="0.01" required oninput="calcInr('sell')">
                     <div class="mt-2" style="font-size: 12px; color: gold;">
                         You Receive: ₹<span id="getInr">0.00</span>
@@ -220,7 +216,7 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
                 </div>
 
                 <div class="form-group">
-                    <label>5. Transaction Hash (Proof)</label>
+                    <label>4. Transaction Hash (Proof)</label>
                     <input type="text" name="tx_hash" placeholder="Paste TX Hash" required>
                 </div>
 
@@ -231,22 +227,10 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
     </div>
 
     <div class="bottom-nav">
-        <a href="index.php" class="nav-item active">
-            <i class="fa-solid fa-house"></i>
-            <span>Home</span>
-        </a>
-        <a href="wallet.php" class="nav-item">
-            <i class="fa-solid fa-wallet"></i>
-            <span>Wallet</span>
-        </a>
-        <a href="invite.php" class="nav-item">
-            <i class="fa-solid fa-user-plus"></i>
-            <span>Invite</span>
-        </a>
-        <a href="history.php" class="nav-item">
-            <i class="fa-solid fa-clock-rotate-left"></i>
-            <span>History</span>
-        </a>
+        <a href="index.php" class="nav-item active"><i class="fa-solid fa-house"></i><span>Home</span></a>
+        <a href="wallet.php" class="nav-item"><i class="fa-solid fa-wallet"></i><span>Wallet</span></a>
+        <a href="invite.php" class="nav-item"><i class="fa-solid fa-user-plus"></i><span>Invite</span></a>
+        <a href="history.php" class="nav-item"><i class="fa-solid fa-clock-rotate-left"></i><span>History</span></a>
     </div>
 
     <div id="settingsModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:2000; align-items:center; justify-content:center;">
@@ -260,45 +244,70 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
     </div>
 
     <script>
-        // --- 1. TELEGRAM USER DATA SYNC ---
+        // --- 1. TELEGRAM AUTO LOGIN (BACKEND SYNC) ---
         const tg = window.Telegram.WebApp;
         tg.expand();
         
-        // Default PHP Data logic
         let currentTgId = <?php echo $tg_id; ?>;
         
-        // Telegram Data Sync Logic
         if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
             const user = tg.initDataUnsafe.user;
             
-            // 1. Update Real TG ID
+            // A. Visual Update (Frontend)
             currentTgId = user.id;
-
-            // 2. Update Name in Header (First Name + Last Name)
             const fullName = user.first_name + (user.last_name ? ' ' + user.last_name : '');
             document.getElementById('userDataName').innerText = fullName;
-
-            // 3. Update Profile Photo
             if (user.photo_url) {
                 document.getElementById('userDataImg').src = user.photo_url;
             }
-        }
-        // --------------------------------------------------------
 
+            // B. SERVER SYNC (Send Data to Database via API) -> Ye hai wo MAGIC Logic
+            const startParam = tg.initDataUnsafe.start_param || ''; // Referral Code
+            
+            const loginData = new FormData();
+            loginData.append('tg_id', user.id);
+            loginData.append('first_name', user.first_name);
+            loginData.append('last_name', user.last_name || '');
+            loginData.append('username', user.username || '');
+            loginData.append('photo_url', user.photo_url || '');
+            loginData.append('ref_id', startParam);
+
+            fetch('api/login.php', {
+                method: 'POST',
+                body: loginData
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log('User Synced with DB:', data);
+            })
+            .catch(err => console.error('Login Sync Failed', err));
+        }
+
+        // --- 2. DYNAMIC SELL WALLET ---
+        function updateAdminWallet() {
+            const select = document.getElementById('sellNetworkSelect');
+            if(select.options.length > 0) {
+                const selectedOption = select.options[select.selectedIndex];
+                const address = selectedOption.getAttribute('data-addr');
+                document.getElementById('adminWalletDisplay').innerText = address;
+            } else {
+                document.getElementById('adminWalletDisplay').innerText = "No Admin Wallet Set";
+            }
+        }
+        // Run once on load
+        updateAdminWallet();
+
+        // --- 3. OTHER LOGIC (Calculations, Tabs, Forms) ---
         const minLimit = <?php echo $min_limit; ?>;
         const buyRate = <?php echo $settings['p2p_buy_rate_margin'] + 90; ?>;
         const sellRate = <?php echo 90 - $settings['p2p_sell_rate_margin']; ?>;
 
         function showError(message) {
             const alertBox = document.getElementById('errorAlert');
-            if(alertBox) {
-                alertBox.innerText = message;
-                alertBox.style.display = 'block';
-                setTimeout(() => { alertBox.style.display = 'none'; }, 3000);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-            } else {
-                alert(message);
-            }
+            alertBox.innerText = message;
+            alertBox.style.display = 'block';
+            setTimeout(() => { alertBox.style.display = 'none'; }, 3000);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
         function switchTab(type) {
@@ -316,33 +325,23 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             }
         }
 
-        // --- NEW FUNCTION: Toggle Sell Payment Fields ---
         function toggleSellPaymentFields() {
             const method = document.getElementById('sellPaymentMethod').value;
             const upiSection = document.getElementById('upiInputSection');
             const bankSection = document.getElementById('bankInputSection');
-            
-            // Input references to toggle required attribute
             const upiInput = upiSection.querySelector('input');
             const bankInputs = bankSection.querySelectorAll('input');
 
             if (method === 'UPI') {
-                upiSection.style.display = 'block';
-                bankSection.style.display = 'none';
-                
-                // Set required for UPI, Remove for Bank
+                upiSection.style.display = 'block'; bankSection.style.display = 'none';
                 upiInput.setAttribute('required', 'true');
                 bankInputs.forEach(input => input.removeAttribute('required'));
             } else {
-                upiSection.style.display = 'none';
-                bankSection.style.display = 'block';
-                
-                // Set required for Bank, Remove for UPI
+                upiSection.style.display = 'none'; bankSection.style.display = 'block';
                 bankInputs.forEach(input => input.setAttribute('required', 'true'));
                 upiInput.removeAttribute('required');
             }
         }
-        // Initialize on load
         toggleSellPaymentFields();
 
         function calcInr(type) {
@@ -355,76 +354,45 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             }
         }
 
-        function openSettings() {
-            document.getElementById('settingsModal').style.display = 'flex';
-        }
+        function openSettings() { document.getElementById('settingsModal').style.display = 'flex'; }
         
         function copyText(elementId) {
             let text = document.getElementById(elementId).innerText;
-            navigator.clipboard.writeText(text).then(() => {
-                alert('Copied: ' + text);
-            }).catch(err => {
-                prompt("Copy this:", text);
-            });
+            navigator.clipboard.writeText(text).then(() => alert('Copied!')).catch(() => prompt("Copy:", text));
         }
 
-        // --- SUBMIT LOGIC ---
+        // Submit Order
         function submitOrder(e, type) {
             e.preventDefault();
-            
             let btn = e.target.querySelector('button');
             let originalText = btn.innerText;
             
-            let formId = type === 'buy' ? 'buyForm' : 'sellForm';
-            let form = document.getElementById(formId);
+            let form = document.getElementById(type === 'buy' ? 'buyForm' : 'sellForm');
             let formData = new FormData(form);
             let inputAmount = parseFloat(formData.get('amount'));
 
             if (isNaN(inputAmount) || inputAmount < minLimit) {
-                showError("❌ Minimum Amount is " + minLimit + " USDT");
-                return; 
+                showError("❌ Minimum Amount is " + minLimit + " USDT"); return; 
             }
 
-            btn.innerText = "Processing...";
-            btn.disabled = true;
-            
+            btn.innerText = "Processing..."; btn.disabled = true;
             formData.append('type', type);
             formData.append('tg_id', currentTgId); 
             formData.append('asset', 'USDT');
 
-            fetch('api/submit_order.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
+            fetch('api/submit_order.php', { method: 'POST', body: formData })
+            .then(res => res.json())
             .then(data => {
-                if(data.status === 'success') {
-                    if(window.Telegram.WebApp && window.Telegram.WebApp.showPopup) {
-                        window.Telegram.WebApp.showPopup({
-                            title: 'Success',
-                            message: data.message,
-                            buttons: [{type: 'ok'}]
-                        });
-                    } else {
-                        alert("✅ " + data.message);
-                    }
+                if(data.success) { // Note: 'success' key based on new api/submit_order.php
+                    alert("✅ " + data.message);
                     form.reset();
-                    // Reset visibility logic after reset
-                    if(type === 'sell') toggleSellPaymentFields(); 
-                    
                     setTimeout(() => { window.location.href = 'history.php'; }, 1000);
                 } else {
-                    showError("⚠️ " + data.message);
+                    showError("⚠️ " + (data.message || data.status));
                 }
             })
-            .catch(error => {
-                console.error('Error:', error);
-                showError("Something went wrong! Check connection.");
-            })
-            .finally(() => {
-                btn.innerText = originalText;
-                btn.disabled = false;
-            });
+            .catch(err => showError("Network Error"))
+            .finally(() => { btn.innerText = originalText; btn.disabled = false; });
         }
         
         document.addEventListener('contextmenu', event => event.preventDefault());
