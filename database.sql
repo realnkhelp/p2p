@@ -74,24 +74,25 @@ INSERT INTO `settings` (`id`, `p2p_buy_rate`, `p2p_sell_rate`, `maintenance_mode
 
 -- 
 -- 3. Table structure for table `assets`
--- (कोइन्स की लिस्ट)
+-- (कोइन्स की लिस्ट - Network Option Added ✅)
 --
 CREATE TABLE `assets` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `symbol` varchar(10) NOT NULL,
   `name` varchar(50) NOT NULL,
+  `network` varchar(50) DEFAULT NULL, -- ✅ यहाँ Network add किया है
   `icon_url` varchar(255) DEFAULT NULL,
   `is_active` tinyint(1) DEFAULT 1,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 
--- Default Assets
+-- Default Assets (Network Data Added ✅)
 --
-INSERT INTO `assets` (`symbol`, `name`, `is_active`) VALUES
-('USDT', 'Tether', 1),
-('TON', 'Toncoin', 1),
-('BTC', 'Bitcoin', 1);
+INSERT INTO `assets` (`symbol`, `name`, `network`, `is_active`) VALUES
+('USDT', 'Tether', 'TRC20', 1),
+('TON', 'Toncoin', 'TON', 1),
+('BTC', 'Bitcoin', 'Native', 1);
 
 -- --------------------------------------------------------
 
