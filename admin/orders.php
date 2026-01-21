@@ -17,30 +17,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $stmt->execute([$tx_id]);
     $tx = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    if ($tx && $tx['status'] == 'pending') {
-        
-        if ($action == 'approve') {
+    if ($tx) {
+        if ($action == 'approve' && $tx['status'] == 'pending') {
             if ($tx['type'] == 'buy' || $tx['type'] == 'deposit') {
                 updateBalance($pdo, $tx['user_id'], $tx['asset_symbol'], $tx['amount'], 'credit');
                 checkReferralReward($pdo, $tx['user_id'], $tx['amount']);
             }
-            
-            $upd = $pdo->prepare("UPDATE transactions SET status = 'approved' WHERE id = ?");
-            if ($upd->execute([$tx_id])) {
-                $msg = "<div class='alert success'>Order #$tx_id Approved Successfully!</div>";
-            }
+            $pdo->prepare("UPDATE transactions SET status = 'approved' WHERE id = ?")->execute([$tx_id]);
+            $msg = "<div class='alert success'>Order #$tx_id Approved!</div>";
         } 
-        
-        elseif ($action == 'reject') {
+        elseif ($action == 'reject' && $tx['status'] == 'pending') {
             $reason = cleanInput($_POST['reason']);
-            
             if ($tx['type'] == 'sell' || $tx['type'] == 'withdraw' || $tx['type'] == 'swap') {
                 updateBalance($pdo, $tx['user_id'], $tx['asset_symbol'], $tx['amount'], 'credit'); 
             }
-            
-            $upd = $pdo->prepare("UPDATE transactions SET status = 'rejected', reject_reason = ? WHERE id = ?");
-            $upd->execute([$reason, $tx_id]);
-            $msg = "<div class='alert error'>Order #$tx_id Rejected & Refunded!</div>";
+            $pdo->prepare("UPDATE transactions SET status = 'rejected', reject_reason = ? WHERE id = ?")->execute([$reason, $tx_id]);
+            $msg = "<div class='alert error'>Order #$tx_id Rejected!</div>";
+        }
+        elseif ($action == 'delete') {
+            $pdo->prepare("DELETE FROM transactions WHERE id = ?")->execute([$tx_id]);
+            $msg = "<div class='alert error'>Transaction #$tx_id Deleted Permanently!</div>";
         }
     }
 }
@@ -67,11 +63,23 @@ function checkReferralReward($pdo, $user_tg_id, $deposit_amount) {
     }
 }
 
-$filter = isset($_GET['view']) ? cleanInput($_GET['view']) : 'pending';
-$sql = "SELECT * FROM transactions ";
-if ($filter == 'pending') {
-    $sql .= "WHERE status = 'pending' ";
+$view = isset($_GET['view']) ? cleanInput($_GET['view']) : 'pending';
+$search = isset($_GET['search']) ? cleanInput($_GET['search']) : '';
+
+$sql = "SELECT * FROM transactions WHERE 1=1 ";
+
+if ($view == 'pending') {
+    $sql .= "AND status = 'pending' ";
+} elseif ($view == 'rejected') {
+    $sql .= "AND status = 'rejected' ";
+} elseif ($view == 'history') {
+    $sql .= "AND status != 'pending' ";
 }
+
+if (!empty($search)) {
+    $sql .= "AND (user_id LIKE '%$search%' OR tx_hash LIKE '%$search%' OR amount LIKE '%$search%') ";
+}
+
 $sql .= "ORDER BY id DESC";
 $orders = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -85,28 +93,46 @@ $orders = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
     <link rel="stylesheet" href="../assets/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        body { padding-top: 80px; background: #000; color: #ddd; }
+        body { padding-top: 80px; background: #000; color: #ddd; font-family: 'Segoe UI', sans-serif; }
         .admin-nav { position: fixed; top: 0; left: 0; width: 100%; height: 60px; background: #111; border-bottom: 1px solid gold; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; z-index: 100; }
         
-        .table-container { overflow-x: auto; background: #1a1a1a; border-radius: 10px; border: 1px solid #333; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #333; font-size: 13px; }
-        th { background: #222; color: gold; text-transform: uppercase; font-size: 11px; }
+        .container { max-width: 100%; padding: 15px; }
         
-        .badge { padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
-        .bg-pending { background: #ffc107; color: #000; }
-        .bg-approved { background: #28a745; color: #fff; }
-        .bg-rejected { background: #ff4d4d; color: #fff; }
+        .filters { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+        .tab-group { display: flex; gap: 5px; background: #222; padding: 5px; border-radius: 8px; border: 1px solid #333; }
+        .tab-btn { padding: 8px 16px; border-radius: 6px; text-decoration: none; color: #aaa; font-size: 13px; font-weight: bold; transition: 0.3s; }
+        .tab-btn.active { background: gold; color: black; }
         
-        .details-box { background: rgba(255,255,255,0.05); padding: 8px; border-radius: 4px; font-size: 11px; margin-top: 5px; color: #ccc; border: 1px solid #333; }
-        
-        .copy-icon { cursor: pointer; color: gold; margin-left: 5px; font-size: 12px; transition: 0.2s; }
-        .copy-icon:hover { color: white; transform: scale(1.2); }
-        .data-row { margin-bottom: 4px; display: flex; align-items: center; }
+        .search-box { display: flex; gap: 5px; }
+        .search-input { background: #222; border: 1px solid #333; padding: 8px; color: white; border-radius: 6px; outline: none; }
+        .search-btn { background: #333; border: 1px solid #444; color: white; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
 
-        .alert { padding: 10px; margin-bottom: 20px; border-radius: 5px; text-align: center; }
-        .alert.success { background: #28a745; color: white; }
-        .alert.error { background: #ff4d4d; color: white; }
+        .table-container { overflow-x: auto; background: #1a1a1a; border-radius: 10px; border: 1px solid #333; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+        th, td { padding: 15px; text-align: left; border-bottom: 1px solid #2a2a2a; font-size: 13px; }
+        th { background: #222; color: gold; text-transform: uppercase; font-size: 11px; letter-spacing: 1px; }
+        tr:hover { background: #222; }
+
+        .limit-text { max-width: 150px; overflow: hidden; text-overflow: ellipsis; display: inline-block; vertical-align: middle; }
+        .copy-btn { color: gold; cursor: pointer; margin-left: 8px; font-size: 14px; transition: 0.2s; }
+        .copy-btn:hover { transform: scale(1.2); color: white; }
+
+        .badge { padding: 5px 10px; border-radius: 50px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
+        .bg-pending { background: rgba(255, 193, 7, 0.2); color: #ffc107; border: 1px solid #ffc107; }
+        .bg-approved { background: rgba(40, 167, 69, 0.2); color: #28a745; border: 1px solid #28a745; }
+        .bg-rejected { background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
+
+        .action-group { display: flex; gap: 8px; align-items: center; }
+        .circle-btn { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: none; cursor: pointer; color: white; font-size: 14px; transition: 0.2s; }
+        .circle-btn:hover { transform: scale(1.1); }
+        .btn-check { background: #28a745; }
+        .btn-cross { background: #ff4d4d; }
+        .btn-trash { background: #444; border: 1px solid #666; }
+        .btn-trash:hover { background: #ff0000; border-color: red; }
+
+        .alert { padding: 12px; margin-bottom: 20px; border-radius: 8px; text-align: center; font-weight: bold; }
+        .alert.success { background: rgba(40, 167, 69, 0.2); color: #28a745; border: 1px solid #28a745; }
+        .alert.error { background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
     </style>
 </head>
 <body>
@@ -121,21 +147,30 @@ $orders = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
         
         <?php echo $msg; ?>
 
-        <div style="margin-bottom: 15px; display: flex; gap: 10px;">
-            <a href="?view=pending" class="btn" style="width: auto; background: <?php echo $filter=='pending'?'gold':'#333'; ?>; color: <?php echo $filter=='pending'?'#000':'#fff'; ?>;">Pending</a>
-            <a href="?view=all" class="btn" style="width: auto; background: <?php echo $filter=='all'?'gold':'#333'; ?>; color: <?php echo $filter=='all'?'#000':'#fff'; ?>;">History</a>
+        <div class="filters">
+            <div class="tab-group">
+                <a href="?view=pending" class="tab-btn <?php echo $view=='pending'?'active':''; ?>">Pending</a>
+                <a href="?view=history" class="tab-btn <?php echo $view=='history'?'active':''; ?>">History</a>
+                <a href="?view=rejected" class="tab-btn <?php echo $view=='rejected'?'active':''; ?>">Rejected</a>
+            </div>
+            
+            <form method="GET" class="search-box">
+                <input type="hidden" name="view" value="<?php echo $view; ?>">
+                <input type="text" name="search" class="search-input" placeholder="Search ID, Hash..." value="<?php echo htmlspecialchars($search); ?>">
+                <button type="submit" class="search-btn"><i class="fa-solid fa-magnifying-glass"></i></button>
+            </form>
         </div>
 
         <div class="table-container">
             <table>
                 <thead>
                     <tr>
-                        <th>ID / User</th>
+                        <th>ID / UID</th>
                         <th>Type / Asset</th>
                         <th>Amount</th>
-                        <th>Copy Details</th>
+                        <th>Details (Hash/Addr/Bank)</th>
                         <th>Status</th>
-                        <th>Action</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -143,66 +178,39 @@ $orders = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
                         <?php foreach($orders as $row): ?>
                         <tr>
                             <td>
-                                <b>#<?php echo $row['id']; ?></b><br>
-                                <span style="font-size: 10px; color: #888;">UID: <?php echo $row['user_id']; ?></span>
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span style="color: white; font-weight: bold;">#<?php echo $row['id']; ?></span>
+                                    <span style="color: #666;">|</span>
+                                    <span style="color: gold; font-family: monospace;"><?php echo $row['user_id']; ?></span>
+                                </div>
                             </td>
                             
                             <td>
-                                <span style="text-transform: uppercase; font-weight: bold; 
-                                    color: <?php echo ($row['type']=='buy' || $row['type']=='deposit') ? '#28a745' : '#ff4d4d'; ?>">
+                                <span style="font-weight: bold; text-transform: uppercase; color: <?php echo ($row['type']=='buy'||$row['type']=='deposit')?'#28a745':'#ff4d4d'; ?>">
                                     <?php echo $row['type']; ?>
                                 </span>
-                                <br>
-                                <span style="font-size: 10px; color: gold;"><?php echo $row['asset_symbol']; ?></span>
+                                <span style="font-size: 11px; background: #333; padding: 2px 6px; border-radius: 4px; margin-left: 5px;"><?php echo $row['asset_symbol']; ?></span>
                             </td>
 
-                            <td style="font-weight: bold; font-family: monospace;">
+                            <td style="font-weight: bold; font-family: monospace; color: white;">
                                 <?php echo number_format($row['amount'], 4); ?>
                             </td>
 
                             <td>
-                                <?php if(($row['type'] == 'buy' || $row['type'] == 'deposit') && $row['tx_hash']): ?>
-                                    <div class="details-box">
-                                        <div class="data-row">
-                                            <span>Hash: <?php echo substr($row['tx_hash'], 0, 10).'...'; ?></span>
-                                            <i class="fa-regular fa-copy copy-icon" onclick="copyData('<?php echo $row['tx_hash']; ?>')"></i>
-                                        </div>
-                                        <div class="data-row">Network: <?php echo $row['asset_symbol']; ?> (Check)</div>
-                                    </div>
-                                <?php endif; ?>
-
-                                <?php if($row['type'] == 'withdraw'): ?>
-                                    <div class="details-box">
-                                        <div class="data-row">
-                                            <span>Addr: <?php echo substr($row['wallet_address'], 0, 15).'...'; ?></span>
-                                            <i class="fa-regular fa-copy copy-icon" onclick="copyData('<?php echo $row['wallet_address']; ?>')"></i>
-                                        </div>
-                                    </div>
-                                <?php endif; ?>
-
-                                <?php if($row['type'] == 'sell'): ?>
-                                    <div class="details-box">
-                                        <?php if($row['payment_method'] == 'UPI'): ?>
-                                            <div class="data-row">
-                                                <span>UPI: <?php echo $row['upi_id']; ?></span>
-                                                <i class="fa-regular fa-copy copy-icon" onclick="copyData('<?php echo $row['upi_id']; ?>')"></i>
-                                            </div>
-                                        <?php else: ?>
-                                            <div class="data-row" style="color:#aaa;">Bank Transfer</div>
-                                            <div class="data-row">
-                                                <span>Acc: <?php echo $row['account_number']; ?></span>
-                                                <i class="fa-regular fa-copy copy-icon" onclick="copyData('<?php echo $row['account_number']; ?>')"></i>
-                                            </div>
-                                            <div class="data-row">
-                                                <span>IFSC: <?php echo $row['ifsc_code']; ?></span>
-                                                <i class="fa-regular fa-copy copy-icon" onclick="copyData('<?php echo $row['ifsc_code']; ?>')"></i>
-                                            </div>
-                                            <div style="font-size:10px; color:#888; margin-top:2px;">
-                                                Name: <?php echo $row['account_holder']; ?><br>
-                                                Bank: <?php echo $row['bank_name']; ?>
-                                            </div>
-                                        <?php endif; ?>
-                                    </div>
+                                <?php 
+                                    $details = "";
+                                    if(($row['type'] == 'buy' || $row['type'] == 'deposit') && $row['tx_hash']) $details = $row['tx_hash'];
+                                    elseif($row['type'] == 'withdraw') $details = $row['wallet_address'];
+                                    elseif($row['type'] == 'sell') {
+                                        if($row['payment_method'] == 'UPI') $details = $row['upi_id'];
+                                        else $details = "Acc: " . $row['account_number'] . " | IFSC: " . $row['ifsc_code'];
+                                    }
+                                ?>
+                                <?php if($details): ?>
+                                    <span class="limit-text" title="<?php echo htmlspecialchars($details); ?>"><?php echo htmlspecialchars($details); ?></span>
+                                    <i class="fa-regular fa-copy copy-btn" onclick="copyData('<?php echo htmlspecialchars($details); ?>')"></i>
+                                <?php else: ?>
+                                    <span style="color: #444;">-</span>
                                 <?php endif; ?>
                             </td>
 
@@ -213,28 +221,28 @@ $orders = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
                             </td>
 
                             <td>
-                                <?php if($row['status'] == 'pending'): ?>
-                                    <div style="display: flex; gap: 5px;">
-                                        <form method="POST" onsubmit="return confirm('Approve this order?');">
+                                <div class="action-group">
+                                    <?php if($row['status'] == 'pending'): ?>
+                                        <form method="POST" onsubmit="return confirm('Approve Order?');" style="display:inline;">
                                             <input type="hidden" name="action" value="approve">
                                             <input type="hidden" name="tx_id" value="<?php echo $row['id']; ?>">
-                                            <button type="submit" class="btn" style="padding: 5px 10px; width: auto; background: #28a745; color: white;" title="Approve">
-                                                <i class="fa-solid fa-check"></i>
-                                            </button>
+                                            <button type="submit" class="circle-btn btn-check" title="Approve"><i class="fa-solid fa-check"></i></button>
                                         </form>
 
-                                        <button class="btn" onclick="openRejectModal(<?php echo $row['id']; ?>)" style="padding: 5px 10px; width: auto; background: #ff4d4d; color: white;" title="Reject">
-                                            <i class="fa-solid fa-xmark"></i>
-                                        </button>
-                                    </div>
-                                <?php else: ?>
-                                    <span style="color: #666;">-</span>
-                                <?php endif; ?>
+                                        <button class="circle-btn btn-cross" onclick="openRejectModal(<?php echo $row['id']; ?>)" title="Reject"><i class="fa-solid fa-xmark"></i></button>
+                                    <?php endif; ?>
+
+                                    <form method="POST" onsubmit="return confirm('⚠️ DELETE PERMANENTLY? This will remove it from user history too.');" style="display:inline;">
+                                        <input type="hidden" name="action" value="delete">
+                                        <input type="hidden" name="tx_id" value="<?php echo $row['id']; ?>">
+                                        <button type="submit" class="circle-btn btn-trash" title="Delete Forever"><i class="fa-solid fa-trash"></i></button>
+                                    </form>
+                                </div>
                             </td>
                         </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="6" style="text-align: center; padding: 20px;">No Orders Found</td></tr>
+                        <tr><td colspan="6" style="text-align: center; padding: 30px; color: #666;">No Orders Found</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
@@ -242,21 +250,21 @@ $orders = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
     </div>
 
     <div id="rejectModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:2000; align-items:center; justify-content:center;">
-        <div class="card" style="width: 300px; padding: 20px; border: 1px solid red; background: #222; border-radius: 10px;">
-            <h3 style="color: #ff4d4d; margin-bottom: 15px;">Reject Order</h3>
+        <div class="card" style="width: 300px; padding: 25px; border: 1px solid #ff4d4d; background: #1a1a1a; border-radius: 12px; text-align: center;">
+            <i class="fa-solid fa-circle-exclamation" style="font-size: 40px; color: #ff4d4d; margin-bottom: 15px;"></i>
+            <h3 style="color: white; margin-bottom: 5px;">Reject Order</h3>
+            <p style="color: #888; font-size: 12px; margin-bottom: 15px;">Amount will be refunded to user wallet.</p>
+            
             <form method="POST">
                 <input type="hidden" name="action" value="reject">
                 <input type="hidden" name="tx_id" id="rejectTxId">
                 
-                <div class="form-group">
-                    <label style="color: #ccc;">Reason for Rejection</label>
-                    <input type="text" name="reason" placeholder="e.g. Invalid Hash / Wrong Amount" required 
-                           style="width: 100%; padding: 10px; margin-top: 5px; background: #333; border: 1px solid #555; color: white; border-radius: 5px;">
-                </div>
+                <input type="text" name="reason" placeholder="Reason (e.g. Invalid Hash)" required 
+                       style="width: 100%; padding: 12px; margin-bottom: 15px; background: #222; border: 1px solid #444; color: white; border-radius: 8px; outline: none;">
 
-                <div style="display: flex; gap: 10px; margin-top: 15px;">
-                    <button type="submit" class="btn" style="background: #ff4d4d; color: white;">Reject & Refund</button>
-                    <button type="button" class="btn" onclick="document.getElementById('rejectModal').style.display='none'" style="background: #333; color: white;">Cancel</button>
+                <div style="display: flex; gap: 10px;">
+                    <button type="button" class="btn" onclick="document.getElementById('rejectModal').style.display='none'" style="flex: 1; background: #333; color: white; padding: 10px; border: none; border-radius: 8px; cursor: pointer;">Cancel</button>
+                    <button type="submit" class="btn" style="flex: 1; background: #ff4d4d; color: white; padding: 10px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">Reject</button>
                 </div>
             </form>
         </div>

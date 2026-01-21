@@ -1,34 +1,27 @@
 <?php
-/*
-File: admin/dashboard.php
-Purpose: Main Dashboard with Responsive Sidebar Layout
-*/
 session_start();
 require_once '../includes/db_connect.php';
 
-// Security Check
 if (!isset($_SESSION['admin_logged_in'])) {
     header("Location: index.php");
     exit;
 }
 
-// --- Fetch Stats ---
-// 1. Total Users
 $total_users = $pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
-
-// 2. Pending Orders
 $pending_orders = $pdo->query("SELECT COUNT(*) FROM transactions WHERE status = 'pending'")->fetchColumn();
 
-// 3. Total Deposit (Approved)
 $stmt = $pdo->query("SELECT SUM(amount) FROM transactions WHERE type IN ('buy','deposit') AND status = 'approved'");
 $total_in = $stmt->fetchColumn() ?: '0.00';
 
-// 4. Total Withdraw (Approved)
 $stmt = $pdo->query("SELECT SUM(amount) FROM transactions WHERE type IN ('sell','withdraw') AND status IN ('approved','completed')");
 $total_out = $stmt->fetchColumn() ?: '0.00';
 
-// 5. Recent Activity
-$recent_tx = $pdo->query("SELECT * FROM transactions ORDER BY id DESC LIMIT 5")->fetchAll(PDO::FETCH_ASSOC);
+$today_date = date('Y-m-d 00:00:00');
+
+$today_users = $pdo->query("SELECT COUNT(*) FROM users WHERE created_at >= '$today_date'")->fetchColumn();
+$today_orders = $pdo->query("SELECT COUNT(*) FROM transactions WHERE created_at >= '$today_date'")->fetchColumn();
+$today_deposits = $pdo->query("SELECT COUNT(*) FROM transactions WHERE type IN ('buy','deposit') AND created_at >= '$today_date'")->fetchColumn();
+$today_withdraws = $pdo->query("SELECT COUNT(*) FROM transactions WHERE type IN ('sell','withdraw') AND created_at >= '$today_date'")->fetchColumn();
 
 ?>
 
@@ -43,10 +36,8 @@ $recent_tx = $pdo->query("SELECT * FROM transactions ORDER BY id DESC LIMIT 5")-
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <style>
-        /* --- RESET & LAYOUT --- */
         body { margin: 0; padding: 0; background: #000; color: #ddd; font-family: sans-serif; display: flex; height: 100vh; overflow: hidden; }
         
-        /* --- SIDEBAR STYLE --- */
         .sidebar {
             width: 250px;
             background: #111;
@@ -93,10 +84,9 @@ $recent_tx = $pdo->query("SELECT * FROM transactions ORDER BY id DESC LIMIT 5")-
             border-left: 3px solid gold;
         }
 
-        /* --- MAIN CONTENT STYLE --- */
         .main-content {
             flex: 1;
-            margin-left: 250px; /* Sidebar width */
+            margin-left: 250px; 
             display: flex;
             flex-direction: column;
             transition: margin-left 0.3s ease;
@@ -104,7 +94,6 @@ $recent_tx = $pdo->query("SELECT * FROM transactions ORDER BY id DESC LIMIT 5")-
             overflow-y: auto;
         }
 
-        /* --- TOP HEADER STYLE --- */
         .top-header {
             background: #111;
             padding: 15px 20px;
@@ -123,15 +112,20 @@ $recent_tx = $pdo->query("SELECT * FROM transactions ORDER BY id DESC LIMIT 5")-
             color: gold;
             font-size: 24px;
             cursor: pointer;
-            display: none; /* Hidden on Desktop */
+            display: none; 
         }
 
-        /* --- DASHBOARD CARDS --- */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
             padding: 20px;
+        }
+
+        .stat-card-link {
+            text-decoration: none;
+            color: inherit;
+            display: block;
         }
 
         .stat-card {
@@ -141,43 +135,66 @@ $recent_tx = $pdo->query("SELECT * FROM transactions ORDER BY id DESC LIMIT 5")-
             border: 1px solid #333;
             position: relative;
             overflow: hidden;
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            border-color: gold;
         }
         
         .stat-card h2 { margin: 10px 0 0 0; color: white; }
         .stat-card p { margin: 0; font-size: 12px; color: #888; text-transform: uppercase; }
         .stat-icon { position: absolute; right: 15px; top: 15px; font-size: 40px; color: gold; opacity: 0.1; }
 
-        /* --- TABLE STYLE --- */
         .recent-section { padding: 0 20px 20px 20px; }
-        .table-wrapper { background: #1a1a1a; border-radius: 12px; border: 1px solid #333; overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #333; color: #ccc; font-size: 13px; }
-        th { background: #222; color: gold; font-size: 11px; text-transform: uppercase; }
         
-        .badge { padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
-        .bg-pending { background: #ffc107; color: black; }
-        .bg-approved { background: #28a745; color: white; }
-        .bg-rejected { background: #ff4d4d; color: white; }
+        .today-stats-box {
+            background: #1a1a1a;
+            border-radius: 12px;
+            border: 1px solid #333;
+            padding: 20px;
+            max-width: 500px;
+        }
 
-        /* --- RESPONSIVE MEDIA QUERY --- */
+        .today-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            color: #ddd;
+            font-size: 14px;
+        }
+
+        .today-row .count {
+            font-weight: bold;
+            color: gold;
+            font-family: monospace;
+            font-size: 16px;
+        }
+
+        .divider {
+            border: 0;
+            border-top: 1px solid #333;
+            margin: 5px 0;
+        }
+
         @media (max-width: 768px) {
             .sidebar {
-                transform: translateX(-100%); /* Hide sidebar by default on mobile */
+                transform: translateX(-100%); 
             }
             
             .sidebar.open {
-                transform: translateX(0); /* Show when active */
+                transform: translateX(0); 
             }
 
             .main-content {
-                margin-left: 0; /* Full width on mobile */
+                margin-left: 0; 
             }
 
             .toggle-btn {
-                display: block; /* Show hamburger on mobile */
+                display: block; 
             }
             
-            /* Overlay for mobile when sidebar is open */
             .overlay {
                 display: none;
                 position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -204,6 +221,9 @@ $recent_tx = $pdo->query("SELECT * FROM transactions ORDER BY id DESC LIMIT 5")-
             </a>
             <a href="orders.php" class="menu-link">
                 <i class="fa-solid fa-list-check"></i> Manage Orders
+            </a>
+            <a href="assets.php" class="menu-link">
+                <i class="fa-solid fa-wallet"></i> Wallet Assets
             </a>
             <a href="referral.php" class="menu-link">
                 <i class="fa-solid fa-sliders"></i> Settings & Rates
@@ -234,60 +254,64 @@ $recent_tx = $pdo->query("SELECT * FROM transactions ORDER BY id DESC LIMIT 5")-
         </header>
 
         <div class="stats-grid">
-            <div class="stat-card">
-                <p>Pending Orders</p>
-                <h2 style="color: gold;"><?php echo $pending_orders; ?></h2>
-                <i class="fa-solid fa-clock stat-icon"></i>
-            </div>
-            <div class="stat-card">
-                <p>Total Users</p>
-                <h2><?php echo $total_users; ?></h2>
-                <i class="fa-solid fa-users stat-icon"></i>
-            </div>
-            <div class="stat-card">
-                <p>Total Deposit (In)</p>
-                <h2 style="color: #28a745;">$<?php echo number_format($total_in); ?></h2>
-                <i class="fa-solid fa-arrow-down stat-icon" style="color: #28a745;"></i>
-            </div>
-            <div class="stat-card">
-                <p>Total Withdraw (Out)</p>
-                <h2 style="color: #ff4d4d;">$<?php echo number_format($total_out); ?></h2>
-                <i class="fa-solid fa-arrow-up stat-icon" style="color: #ff4d4d;"></i>
-            </div>
+            <a href="orders.php?view=pending" class="stat-card-link">
+                <div class="stat-card">
+                    <p>Pending Orders</p>
+                    <h2 style="color: gold;"><?php echo $pending_orders; ?></h2>
+                    <i class="fa-solid fa-clock stat-icon"></i>
+                </div>
+            </a>
+            
+            <a href="users.php" class="stat-card-link">
+                <div class="stat-card">
+                    <p>Total Users</p>
+                    <h2><?php echo $total_users; ?></h2>
+                    <i class="fa-solid fa-users stat-icon"></i>
+                </div>
+            </a>
+
+            <a href="orders.php?view=history" class="stat-card-link">
+                <div class="stat-card">
+                    <p>Total Deposit (In)</p>
+                    <h2 style="color: #28a745;">$<?php echo number_format($total_in); ?></h2>
+                    <i class="fa-solid fa-arrow-down stat-icon" style="color: #28a745;"></i>
+                </div>
+            </a>
+
+            <a href="orders.php?view=history" class="stat-card-link">
+                <div class="stat-card">
+                    <p>Total Withdraw (Out)</p>
+                    <h2 style="color: #ff4d4d;">$<?php echo number_format($total_out); ?></h2>
+                    <i class="fa-solid fa-arrow-up stat-icon" style="color: #ff4d4d;"></i>
+                </div>
+            </a>
         </div>
 
         <div class="recent-section">
-            <h4 style="color: gold; margin-bottom: 15px;">Live Activity Feed</h4>
-            <div class="table-wrapper">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Type</th>
-                            <th>Amount</th>
-                            <th>Status</th>
-                            <th>Time</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach($recent_tx as $tx): ?>
-                        <tr>
-                            <td>#<?php echo $tx['id']; ?></td>
-                            <td>
-                                <span style="font-weight: bold; text-transform: uppercase; color: <?php echo ($tx['type']=='buy'||$tx['type']=='deposit')?'#28a745':'#ff4d4d'; ?>">
-                                    <?php echo $tx['type']; ?>
-                                </span>
-                            </td>
-                            <td style="font-family: monospace;">$<?php echo number_format($tx['amount'], 2); ?></td>
-                            <td><span class="badge bg-<?php echo $tx['status']; ?>"><?php echo $tx['status']; ?></span></td>
-                            <td><?php echo date('d M, H:i', strtotime($tx['created_at'])); ?></td>
-                        </tr>
-                        <?php endforeach; ?>
-                        <?php if(empty($recent_tx)): ?>
-                            <tr><td colspan="5" style="text-align: center;">No activity yet.</td></tr>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
+            <h4 style="color: gold; margin-bottom: 15px;">Today's Activity Feed</h4>
+            
+            <div class="today-stats-box">
+                <div class="today-row">
+                    <span>Today User Join</span>
+                    <span class="count"><?php echo $today_users; ?></span>
+                </div>
+                
+                <hr class="divider">
+                
+                <div class="today-row">
+                    <span>Today Order</span>
+                    <span class="count"><?php echo $today_orders; ?></span>
+                </div>
+                
+                <div class="today-row">
+                    <span>Today Withdraw</span>
+                    <span class="count"><?php echo $today_withdraws; ?></span>
+                </div>
+                
+                <div class="today-row">
+                    <span>Today Deposit</span>
+                    <span class="count"><?php echo $today_deposits; ?></span>
+                </div>
             </div>
         </div>
 
