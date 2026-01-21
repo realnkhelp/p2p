@@ -3,6 +3,7 @@
 File: wallet.php
 Purpose: Wallet with Balance Checks, Swap Logic & History Saving
 */
+require_once 'includes/db_connect.php';
 require_once 'includes/functions.php';
 
 // 1. Fetch Settings & Limits

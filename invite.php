@@ -1,26 +1,30 @@
 <?php
 /*
 File: invite.php
-Purpose: Referral System (Re-ordered Layout: Invite Card Top, Stats Bottom)
+Purpose: Referral System (Protected with Block & Maintenance Check)
 */
+
+// 1. Security & Database Connection (Auto Block/Maintenance Check)
+require_once 'includes/db_connect.php';
 require_once 'includes/functions.php';
+
 $settings = getSettings($pdo);
 
-// 1. Settings & Limits
+// 2. Settings & Limits
 $referral_reward = isset($settings['referral_bonus_amount']) ? $settings['referral_bonus_amount'] : 0.50; 
 $min_trade_req = isset($settings['referral_min_trade']) ? $settings['referral_min_trade'] : 50; 
 
-// 2. User Setup (Browser Fallback)
+// 3. User Setup (Browser Fallback)
 $tg_id = 123456789; 
 if (isset($_GET['tg_id'])) $tg_id = cleanInput($_GET['tg_id']);
 
 $user = getOrCreateUser($pdo, $tg_id, "Guest", "guest");
 
-// 3. Referral Link
-$bot_url = $settings['bot_url']; 
+// 4. Referral Link
+$bot_url = isset($settings['bot_url']) ? $settings['bot_url'] : 'https://t.me/YourBot'; 
 $invite_link = $bot_url . "?startapp=" . $user['telegram_id'];
 
-// 4. Stats Calculation
+// 5. Stats Calculation
 // Total Referrals
 $stmt = $pdo->prepare("SELECT COUNT(*) FROM users WHERE referred_by = ?");
 $stmt->execute([$user['telegram_id']]);
@@ -32,7 +36,7 @@ $stmt->execute([$user['telegram_id']]);
 $total_earned = $stmt->fetchColumn();
 if(!$total_earned) $total_earned = 0.00;
 
-// 5. Fetch Referral List
+// 6. Fetch Referral List
 $stmt = $pdo->prepare("
     SELECT first_name, last_name, photo_url, created_at, telegram_id
     FROM users 
@@ -41,7 +45,6 @@ $stmt = $pdo->prepare("
 ");
 $stmt->execute([$user['telegram_id']]);
 $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
 ?>
 
 <!DOCTYPE html>
@@ -61,7 +64,7 @@ $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
             display: flex;
             gap: 15px;
             margin-bottom: 20px;
-            margin-top: 20px; /* Added margin top since it's now below invite card */
+            margin-top: 20px;
         }
         .stat-card {
             flex: 1;
@@ -133,7 +136,8 @@ $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     <div class="sticky-header">
         <div class="profile-section">
-            <img src="assets/images/user.png" onerror="this.src='https://via.placeholder.com/40'" class="profile-pic" id="headerProfileImg">
+            <img src="<?php echo !empty($user['photo_url']) ? htmlspecialchars($user['photo_url']) : 'assets/images/user.png'; ?>" 
+                 onerror="this.src='https://via.placeholder.com/40'" class="profile-pic" id="headerProfileImg">
             <div>
                 <div class="user-name" id="headerUserName"><?php echo htmlspecialchars($user['first_name']); ?></div>
                 <div style="font-size: 10px; color: gold;">Refer & Earn</div>
@@ -255,10 +259,12 @@ $my_referrals = $stmt->fetchAll(PDO::FETCH_ASSOC);
         if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
             const user = tg.initDataUnsafe.user;
             const fullName = user.first_name + (user.last_name ? ' ' + user.last_name : '');
-            document.getElementById('headerUserName').innerText = fullName;
-            if (user.photo_url) {
-                document.getElementById('headerProfileImg').src = user.photo_url;
-            }
+            
+            const nameEl = document.getElementById('headerUserName');
+            const imgEl = document.getElementById('headerProfileImg');
+            
+            if(nameEl) nameEl.innerText = fullName;
+            if(user.photo_url && imgEl) imgEl.src = user.photo_url;
         }
 
         function copyLink() {

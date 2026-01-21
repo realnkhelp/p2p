@@ -3,17 +3,21 @@
 File: history.php
 Purpose: Transaction History (Supports Swap, Bank Details & Rejection)
 */
+
+// 1. Security & Database Connection (Auto Block/Maintenance Check)
+require_once 'includes/db_connect.php';
 require_once 'includes/functions.php';
+
 $settings = getSettings($pdo);
 
-// Browser Testing ID
+// 2. Browser Testing ID
 $tg_id = 123456789; 
 if (isset($_GET['tg_id'])) $tg_id = cleanInput($_GET['tg_id']);
 
-// Get User (Updates Name/Photo automatically due to functions.php update)
+// 3. Get User (Updates Name/Photo automatically due to functions.php update)
 $user = getOrCreateUser($pdo, $tg_id, "Guest", "guest");
 
-// --- Fetch User Transactions ---
+// 4. Fetch User Transactions
 $stmt = $pdo->prepare("SELECT * FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 50");
 $stmt->execute([$user['telegram_id']]);
 $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -64,9 +68,10 @@ function getStatusColor($status) {
 
     <div class="sticky-header">
         <div class="profile-section">
-            <img src="assets/images/user.png" onerror="this.src='https://via.placeholder.com/40'" class="profile-pic" id="headerProfileImg">
+            <img src="<?php echo !empty($user['photo_url']) ? htmlspecialchars($user['photo_url']) : 'assets/images/user.png'; ?>" 
+                 onerror="this.src='https://via.placeholder.com/40'" class="profile-pic" id="headerProfileImg">
             <div>
-                <div class="user-name" id="headerUserName"><?php echo $user['first_name']; ?></div>
+                <div class="user-name" id="headerUserName"><?php echo htmlspecialchars($user['first_name']); ?></div>
                 <div style="font-size: 10px; color: gold;">Activity Log</div>
             </div>
         </div>
@@ -193,16 +198,19 @@ function getStatusColor($status) {
     </div>
 
     <script>
-        // TG Data Sync Logic (Copy from index.php)
+        // TG Data Sync Logic
         const tg = window.Telegram.WebApp;
         tg.expand();
+        
         if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
             const user = tg.initDataUnsafe.user;
             const fullName = user.first_name + (user.last_name ? ' ' + user.last_name : '');
-            document.getElementById('headerUserName').innerText = fullName;
-            if (user.photo_url) {
-                document.getElementById('headerProfileImg').src = user.photo_url;
-            }
+            
+            const nameEl = document.getElementById('headerUserName');
+            const imgEl = document.getElementById('headerProfileImg');
+            
+            if(nameEl) nameEl.innerText = fullName;
+            if(user.photo_url && imgEl) imgEl.src = user.photo_url;
         }
     </script>
 </body>
