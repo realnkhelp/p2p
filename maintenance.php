@@ -1,7 +1,7 @@
 <?php
 /*
 File: maintenance.php
-Purpose: Dynamic Maintenance Page with Auto-Redirect (React Design Replica)
+Purpose: Dynamic Maintenance Page with Auto-Redirect
 */
 require_once 'includes/db_connect.php';
 
