@@ -1,44 +1,52 @@
 <?php
 /*
 File: index.php
-Purpose: Home Page - With Auto Database Sync & Dynamic Admin Wallets
+Purpose: Home Page - Fully Dynamic Rates, Wallets & Security
 */
 
+// 1. Database & Security Check (Block/Maintenance)
+require_once 'includes/db_connect.php';
 require_once 'includes/functions.php';
 
-// 1. Settings Fetch
+// 2. Settings Fetch
 $settings = getSettings($pdo);
 
-// 2. Minimum Limit
+// 3. Dynamic Rates (Database se Direct Price)
+// Agar database me value nahi hai to default 92 aur 88 le lega
+$buy_rate_display = isset($settings['p2p_buy_rate']) ? floatval($settings['p2p_buy_rate']) : 92.00;
+$sell_rate_display = isset($settings['p2p_sell_rate']) ? floatval($settings['p2p_sell_rate']) : 88.00;
+
+// 4. Minimum Limit
 $min_limit = isset($settings['min_withdraw_limit']) ? floatval($settings['min_withdraw_limit']) : 10.00;
 
-// 3. Admin Wallet Logic (Dynamic Parsing)
+// 5. Admin Wallet Logic (Dynamic Parsing from JSON)
 $admin_wallets = [];
-$raw_wallets = $settings['admin_wallets_json'];
+$raw_wallets = isset($settings['admin_wallets_json']) ? $settings['admin_wallets_json'] : '{}';
 
-// JSON decode karke dekhte hain ki kya data hai
 $decoded = json_decode($raw_wallets, true);
-
 if (is_array($decoded)) {
-    // Agar JSON sahi hai (New Format: {"USDT_TRC20":"Tx..", "USDT_BEP20":"0x.."})
     $admin_wallets = $decoded;
 } else {
-    // Agar purana format hai (Sirf string)
     $admin_wallets['USDT (Default)'] = $raw_wallets;
 }
 
-// 4. Initial PHP User Setup (Fallback)
-$tg_id = 123456789; 
+// 6. Initial PHP User Setup (Fallback for first load)
+$tg_id = 0; 
 $first_name = "Guest";
-$username = "guest_user";
 
 if (isset($_GET['tg_id'])) {
     $tg_id = cleanInput($_GET['tg_id']);
     $first_name = cleanInput($_GET['first_name'] ?? 'User');
 }
 
-// Note: Asli login ab JavaScript se hoga taaki photo update ho sake
-$user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
+// User Data Fetch (Display ke liye)
+$user = ['first_name' => 'Guest', 'photo_url' => 'assets/images/user.png'];
+if(isset($_SESSION['user_id'])) {
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE telegram_id = ?");
+    $stmt->execute([$_SESSION['user_id']]);
+    $u = $stmt->fetch();
+    if($u) $user = $u;
+}
 ?>
 
 <!DOCTYPE html>
@@ -77,7 +85,6 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             background: rgba(255, 255, 255, 0.05); padding: 10px; border-radius: 5px; border: 1px solid #444; margin-top: 5px;
         }
         
-        /* Network Selector Box */
         .network-box {
             background: #222; padding: 10px; border-radius: 8px; border: 1px dashed #555; margin-bottom: 10px;
         }
@@ -87,7 +94,8 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
 
     <div class="sticky-header">
         <div class="profile-section">
-            <img src="assets/images/user.png" onerror="this.src='https://via.placeholder.com/40'" class="profile-pic" id="userDataImg">
+            <img src="<?php echo !empty($user['photo_url']) ? htmlspecialchars($user['photo_url']) : 'assets/images/user.png'; ?>" 
+                 onerror="this.src='https://via.placeholder.com/40'" class="profile-pic" id="userDataImg">
             <div>
                 <div class="user-name" id="userDataName"><?php echo htmlspecialchars($user['first_name']); ?></div>
                 <div style="font-size: 10px; color: gold;">Verified User</div>
@@ -107,10 +115,10 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
 
         <div class="btn-group">
             <button class="btn" id="btnBuy" onclick="switchTab('buy')" style="background: #28a745; color: white;">
-                BUY ₹<?php echo $settings['p2p_buy_rate_margin'] + 90; ?>
+                BUY ₹<?php echo number_format($buy_rate_display, 2); ?>
             </button>
             <button class="btn" id="btnSell" onclick="switchTab('sell')" style="background: #333; color: white; border: 1px solid #ff4d4d;">
-                SELL ₹<?php echo 90 - $settings['p2p_sell_rate_margin']; ?>
+                SELL ₹<?php echo number_format($sell_rate_display, 2); ?>
             </button>
         </div>
 
@@ -121,7 +129,7 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
                 <div class="form-group">
                     <label>1. Send Payment to this UPI</label>
                     <div class="invite-link-box" style="display: flex; justify-content: space-between; align-items: center;">
-                        <span id="adminUpi"><?php echo $settings['admin_upi']; ?></span>
+                        <span id="adminUpi"><?php echo htmlspecialchars($settings['admin_upi']); ?></span>
                         <i class="fa-regular fa-copy" onclick="copyText('adminUpi')" style="cursor: pointer;"></i>
                     </div>
                     <small style="color: #aaa;">Send money via PhonePe/GPay/Paytm.</small>
@@ -168,14 +176,14 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
                     <label>1. Select Network & Send USDT</label>
                     <select id="sellNetworkSelect" onchange="updateAdminWallet()" class="form-control mb-2">
                         <?php foreach($admin_wallets as $net => $addr): ?>
-                            <option value="<?php echo $net; ?>" data-addr="<?php echo $addr; ?>">
+                            <option value="<?php echo $net; ?>" data-addr="<?php echo htmlspecialchars($addr); ?>">
                                 <?php echo str_replace('_', ' ', $net); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
 
                     <div class="invite-link-box" style="display: flex; justify-content: space-between; align-items: center;">
-                        <span id="adminWalletDisplay" style="font-size: 12px; word-break: break-all;">Loading...</span> 
+                        <span id="adminWalletDisplay" style="font-size: 12px; word-break: break-all;">Select Network</span> 
                         <i class="fa-regular fa-copy" onclick="copyText('adminWalletDisplay')" style="cursor: pointer; margin-left:5px;"></i>
                     </div>
                     <small style="color: #ff4d4d; font-size: 11px;">⚠️ Send only to the address shown above matching the network.</small>
@@ -238,31 +246,34 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             <h3>Settings</h3>
             <hr style="border-color: #333; margin: 10px 0;">
             <button class="btn mt-2" onclick="alert('Version 1.0.0')">About Us</button>
-            <button class="btn mt-2" onclick="window.location.href='<?php echo $settings['support_url']; ?>'">Support</button>
+            <button class="btn mt-2" onclick="window.location.href='<?php echo htmlspecialchars($settings['support_url']); ?>'">Support</button>
             <button class="btn mt-2 btn-danger" onclick="document.getElementById('settingsModal').style.display='none'">Close</button>
         </div>
     </div>
 
     <script>
-        // --- 1. TELEGRAM AUTO LOGIN (BACKEND SYNC) ---
+        // --- 1. TELEGRAM AUTO LOGIN ---
         const tg = window.Telegram.WebApp;
         tg.expand();
         
-        let currentTgId = <?php echo $tg_id; ?>;
+        // PHP Default (Agar pehli baar load hua bina JS ke)
+        let currentTgId = <?php echo isset($_SESSION['user_id']) ? $_SESSION['user_id'] : 0; ?>;
         
         if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
             const user = tg.initDataUnsafe.user;
             
-            // A. Visual Update (Frontend)
+            // Visual Update
             currentTgId = user.id;
             const fullName = user.first_name + (user.last_name ? ' ' + user.last_name : '');
-            document.getElementById('userDataName').innerText = fullName;
-            if (user.photo_url) {
-                document.getElementById('userDataImg').src = user.photo_url;
-            }
+            
+            const nameEl = document.getElementById('userDataName');
+            const imgEl = document.getElementById('userDataImg');
+            
+            if(nameEl) nameEl.innerText = fullName;
+            if(user.photo_url && imgEl) imgEl.src = user.photo_url;
 
-            // B. SERVER SYNC (Send Data to Database via API) -> Ye hai wo MAGIC Logic
-            const startParam = tg.initDataUnsafe.start_param || ''; // Referral Code
+            // SERVER SYNC
+            const startParam = tg.initDataUnsafe.start_param || ''; 
             
             const loginData = new FormData();
             loginData.append('tg_id', user.id);
@@ -272,18 +283,13 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             loginData.append('photo_url', user.photo_url || '');
             loginData.append('ref_id', startParam);
 
-            fetch('api/login.php', {
-                method: 'POST',
-                body: loginData
-            })
+            fetch('api/login.php', { method: 'POST', body: loginData })
             .then(res => res.json())
-            .then(data => {
-                console.log('User Synced with DB:', data);
-            })
-            .catch(err => console.error('Login Sync Failed', err));
+            .then(data => console.log('Sync:', data))
+            .catch(err => console.error('Sync Fail', err));
         }
 
-        // --- 2. DYNAMIC SELL WALLET ---
+        // --- 2. DYNAMIC WALLET DISPLAY ---
         function updateAdminWallet() {
             const select = document.getElementById('sellNetworkSelect');
             if(select.options.length > 0) {
@@ -291,16 +297,16 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
                 const address = selectedOption.getAttribute('data-addr');
                 document.getElementById('adminWalletDisplay').innerText = address;
             } else {
-                document.getElementById('adminWalletDisplay').innerText = "No Admin Wallet Set";
+                document.getElementById('adminWalletDisplay').innerText = "No Address Set";
             }
         }
-        // Run once on load
         updateAdminWallet();
 
-        // --- 3. OTHER LOGIC (Calculations, Tabs, Forms) ---
+        // --- 3. DYNAMIC RATES & LOGIC ---
+        // Yahan ab PHP variable se direct rate aa raha hai (No Margin Calculation Here)
         const minLimit = <?php echo $min_limit; ?>;
-        const buyRate = <?php echo $settings['p2p_buy_rate_margin'] + 90; ?>;
-        const sellRate = <?php echo 90 - $settings['p2p_sell_rate_margin']; ?>;
+        const buyRate = <?php echo $buy_rate_display; ?>;
+        const sellRate = <?php echo $sell_rate_display; ?>;
 
         function showError(message) {
             const alertBox = document.getElementById('errorAlert');
@@ -361,7 +367,6 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
             navigator.clipboard.writeText(text).then(() => alert('Copied!')).catch(() => prompt("Copy:", text));
         }
 
-        // Submit Order
         function submitOrder(e, type) {
             e.preventDefault();
             let btn = e.target.querySelector('button');
@@ -377,13 +382,13 @@ $user = getOrCreateUser($pdo, $tg_id, $first_name, $username);
 
             btn.innerText = "Processing..."; btn.disabled = true;
             formData.append('type', type);
-            formData.append('tg_id', currentTgId); 
+            if(currentTgId) formData.append('tg_id', currentTgId); 
             formData.append('asset', 'USDT');
 
             fetch('api/submit_order.php', { method: 'POST', body: formData })
             .then(res => res.json())
             .then(data => {
-                if(data.success) { // Note: 'success' key based on new api/submit_order.php
+                if(data.success) {
                     alert("✅ " + data.message);
                     form.reset();
                     setTimeout(() => { window.location.href = 'history.php'; }, 1000);
